@@ -1,2 +1,4 @@
 tesseract-ocr
 libpoppler-cpp-dev
+pytesseract
+pdf2image
