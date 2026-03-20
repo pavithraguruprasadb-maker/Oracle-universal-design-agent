@@ -86,22 +86,58 @@ def extract_master_content(file, ocr_enabled=False):
     text = ""
     if file is None: return ""
     ext = file.name.split('.')[-1].lower()
+    
     try:
+        # --- PDF HANDLING ---
         if ext == "pdf":
             f_bytes = file.read()
             with pdfplumber.open(io.BytesIO(f_bytes)) as pdf:
                 for i, page in enumerate(pdf.pages):
                     p_text = page.extract_text() or ""
+                    
+                    # If page is an image/scan, trigger OCR
+                    if ocr_enabled and (not p_text.strip() or len(p_text) < 100):
+                        # Convert only this specific page to an image to save memory
+                        images = convert_from_bytes(f_bytes, first_page=i+1, last_page=i+1)
+                        for img in images:
+                            p_text += f"\n[OCR CONTENT]: {pytesseract.image_to_string(img)}\n"
+                    
                     text += f"\n[FILE: {file.name} | PAGE: {i+1}]\n{p_text}\n"
+
+        # --- PPT HANDLING ---
         elif ext in ["pptx", "pptm"]:
             prs = Presentation(file)
             for i, slide in enumerate(prs.slides):
-                s_txt = "".join([shape.text + " " for shape in slide.shapes if hasattr(shape, "text")])
+                s_txt = ""
+                for shape in slide.shapes:
+                    # 1. Capture normal text
+                    if hasattr(shape, "text"):
+                        s_txt += shape.text + " "
+                    
+                    # 2. Capture table data properly
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            s_txt += " | ".join([c.text_frame.text if not c.is_spanned else "" for c in row.cells]) + "\n"
+                    
+                    # 3. Capture screenshots/images (Shape Type 13 is a Picture)
+                    if ocr_enabled and shape.shape_type == 13:
+                        try:
+                            img_bytes = shape.image.blob
+                            img = Image.open(io.BytesIO(img_bytes))
+                            s_txt += f"\n[SCREENSHOT OCR]: {pytesseract.image_to_string(img)}\n"
+                        except Exception:
+                            continue # Skip if image is corrupt
+                
                 text += f"\n[FILE: {file.name} | SLIDE: {i+1}]\n{s_txt}\n"
+
+        # --- DOCX HANDLING ---
         elif ext == "docx":
             doc = DocxRead(file)
             text += "\n".join([p.text for p in doc.paragraphs])
-    except Exception as e: st.error(f"Error reading {file.name}: {e}")
+            
+    except Exception as e: 
+        st.error(f"Error reading {file.name}: {e}")
+        
     return text
 
 # --- UI Layout ---
