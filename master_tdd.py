@@ -147,7 +147,7 @@ if files and st.button("🚀 Generate Reliable Design", use_container_width=True
         src = "".join([extract_master_content(f, use_ocr) for f in files])
         intel = classify_instructional_content(src)
         
-        try:
+       try:
             # SECURE KEY INTEGRATION
             api_key = st.secrets["GROQ_API_KEY"]
             client = Groq(api_key=api_key)
@@ -155,10 +155,8 @@ if files and st.button("🚀 Generate Reliable Design", use_container_width=True
             st.error("🔑 API Key Missing! Please add 'GROQ_API_KEY' to Streamlit Secrets.")
             st.stop()
 
-      prompt = f"SOURCE DATA: {intel[:10000]}\nBENCHMARK: {bench[:2000]}\nINPUTS: {pn}, {cn}, {jt}\nSTRICT RULES: You MUST use exact headers starting with '--- ' like '--- COURSE OVERVIEW', '--- JOB TASK TO SKILL MAPPING', and '--- CASE STUDY'. Reference [FILE:...] tags and use Bloom's Taxonomy."
-        SOURCE DATA: {intel[:10000]}
-        BENCHMARK: {bench[:2000]}
-        INPUTS: {pn}, {cn}, {jt}
+prompt = f"SOURCE DATA: {intel[:10000]}\nBENCHMARK: {bench[:2000]}\nINPUTS: {pn}, {cn}, {jt}\nSTRICT RULES: You MUST use exact headers starting with '--- ' like '--- COURSE OVERVIEW', '--- JOB TASK TO SKILL MAPPING', and '--- CASE STUDY'. Reference [FILE:...] tags and use Bloom's Taxonomy."
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
 
         STRICT RULES:
         1. You MUST use these exact headers (starting with '--- '): 
