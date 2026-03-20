@@ -1,0 +1,11 @@
+streamlit
+pdfplumber
+groq
+python-pptx
+python-docx
+pdf2image
+pytesseract
+pillow
+requests
+beautifulsoup4
+reportlab
