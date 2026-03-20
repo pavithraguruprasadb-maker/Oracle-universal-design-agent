@@ -137,12 +137,13 @@ def build_word(content, cn):
     buf = io.BytesIO(); doc.save(buf); buf.seek(0); return buf
 
 # --- Orchestrator ---
+# --- Updated Orchestrator with Oracle-Spec Logic ---
 if st.button("🚀 Generate Reliable Design", use_container_width=True):
     with st.status("🛠️ Analyzing Multi-Source Content...", expanded=True) as status:
         
         bench = extract_master_content(custom_bench, use_ocr) if custom_bench else GOLD_STANDARD_FALLBACK
         
-        # Combine Files + URL Content
+        # This combines your PDF, PPT, and URL into one source!
         file_src = "".join([extract_master_content(f, use_ocr) for f in files])
         url_src = extract_url_content(url_input)
         all_src = file_src + url_src
@@ -154,15 +155,20 @@ if st.button("🚀 Generate Reliable Design", use_container_width=True):
         except:
             st.error("🔑 API Key Missing!"); st.stop()
 
+        # We are adding "Consultant-Grade" instructions here
         prompt = f"""
+        ACT AS: Senior Oracle Instructional Designer. 
+        AUDIENCE: Functional Consultants (Implementers).
         SOURCE DATA: {intel[:10000]}
         BENCHMARK: {bench[:2000]}
         INPUTS: {pn}, {cn}, {jt}
 
-        INSTRUCTIONS:
-        1. Use exact headers starting with '--- ' (e.g., --- COURSE OVERVIEW).
-        2. Reference [FILE: Name] or [URL: Link] for technical claims.
-        3. Sections required: {', '.join(MANDATORY_SECTIONS)}.
+        STRICT INSTRUCTIONS:
+        1. HEADERS: Use exact headers: {', '.join(['--- ' + s for s in MANDATORY_SECTIONS])}. (Check spelling: 'OVERVIEW', not 'OVERVERAGE').
+        2. BLOOM'S: Configuration tasks must be 'Applying' or 'Analyzing'. Do not use 'Remembering' for technical setup.
+        3. 80/20 RULE: Include a 'Troubleshooting' or 'Best Practices' topic in the Course Coverage Table.
+        4. MEASURABILITY: Success criteria in the table must be specific (e.g., 'Successfully resolve 3 prediction errors' instead of 'Understand errors').
+        5. TRACEABILITY: You MUST cite [FILE: Name] or [URL: Link] for every module.
         """
         
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
