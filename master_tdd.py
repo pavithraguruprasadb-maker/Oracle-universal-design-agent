@@ -155,7 +155,17 @@ if files and st.button("🚀 Generate Reliable Design", use_container_width=True
             st.error("🔑 API Key Missing! Please add 'GROQ_API_KEY' to Streamlit Secrets.")
             st.stop()
 
-        prompt = f"BENCHMARK: {bench[:2000]}\nINPUTS: {pn}, {cn}, {jt}\nSOURCE: {intel[:10000]}\nRULES: Reference [FILE:...] tags. Include 'JOB TASK TO SKILL MAPPING' table. Use Bloom's Taxonomy.\nSECTIONS: {MANDATORY_SECTIONS}"
+       prompt = f"""
+        SOURCE DATA: {intel[:10000]}
+        BENCHMARK: {bench[:2000]}
+        INPUTS: {pn}, {cn}, {jt}
+
+        STRICT RULES:
+        1. You MUST use these exact headers (starting with '--- '): 
+           --- COURSE OVERVIEW, --- JOB TASK TO SKILL MAPPING, --- CASE STUDY, --- GTM MESSAGING.
+        2. Reference [FILE:...] tags for every technical claim.
+        3. Use Bloom's Taxonomy for the Skill Mapping table.
+        """
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
         
         st.session_state.design_out = res.choices[0].message.content
