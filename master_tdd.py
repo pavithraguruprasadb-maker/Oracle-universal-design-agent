@@ -75,13 +75,11 @@ def extract_master_content(file, ocr_enabled=False):
             with pdfplumber.open(io.BytesIO(f_bytes)) as pdf:
                 for i, page in enumerate(pdf.pages):
                     p_text = page.extract_text() or ""
-                    # Table Extraction (Structure Preservation)
                     tables = page.extract_tables()
                     t_text = ""
                     for table in tables:
                         for row in table: t_text += " | ".join([str(c) if c else "[SPANNED]" for c in row]) + "\n"
                     
-                    # Vision/OCR Layer
                     ocr_text = ""
                     if ocr_enabled and (not p_text.strip() or len(p_text) < 200):
                         imgs = convert_from_bytes(f_bytes, first_page=i+1, last_page=i+1)
@@ -104,7 +102,7 @@ def extract_master_content(file, ocr_enabled=False):
     return text
 
 # --- Sidebar Controls ---
-st.sidebar.title("🛠️ Deployment Controls")
+st.sidebar.title("🛠️ Agent Controls")
 use_ocr = st.sidebar.checkbox("Enable Vision/OCR", value=False)
 custom_bench = st.sidebar.file_uploader("Upload Gold Standard (7.2)", type=["pdf", "pptx", "docx"])
 
@@ -114,14 +112,14 @@ if "word_f" not in st.session_state: st.session_state.word_f = None
 
 # --- Main UI ---
 st.title("📘 Universal Design Agent")
-pn = st.text_input("Product Pillar", placeholder="e.g. Oracle EPM")
+pn = st.text_input("Product Pillar", placeholder="e.g. Oracle Cloud EPM")
 cn = st.text_input("Course Title")
 jt = st.text_area("Job Task Analysis (JTA)", placeholder="List core tasks for mapping...")
 
 st.markdown("---")
 files = st.file_uploader("📂 Source Documentation", type=["pdf", "pptx", "pptm", "docx"], accept_multiple_files=True)
 
-# --- Document Builders (PDF & WORD) ---
+# --- Document Builders ---
 def build_pdf(content, cn):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
@@ -145,22 +143,19 @@ def build_word(content, cn):
 if files and st.button("🚀 Generate Reliable Design", use_container_width=True):
     with st.status("🛠️ Running Master Class Logic Engine...", expanded=True) as status:
         
-        # 1. Benchmark & Source
         bench = extract_master_content(custom_bench, use_ocr) if custom_bench else GOLD_STANDARD_FALLBACK
         src = "".join([extract_master_content(f, use_ocr) for f in files])
         intel = classify_instructional_content(src)
         
-        # 2. Secure API Key Integration
         try:
-            # THIS IS THE CHANGE: Using st.secrets for the Web Way
+            # SECURE KEY INTEGRATION
             api_key = st.secrets["GROQ_API_KEY"]
             client = Groq(api_key=api_key)
         except Exception:
             st.error("🔑 API Key Missing! Please add 'GROQ_API_KEY' to Streamlit Secrets.")
             st.stop()
 
-        # 3. AI Generation
-        prompt = f"BENCHMARK: {bench[:2000]}\nINPUTS: {pn}, {cn}, {jt}\nSOURCE: {intel[:10000]}\nRULES: Reference [FILE:...] tags. Include 'JOB TASK TO SKILL MAPPING' table.\nSECTIONS: {MANDATORY_SECTIONS}"
+        prompt = f"BENCHMARK: {bench[:2000]}\nINPUTS: {pn}, {cn}, {jt}\nSOURCE: {intel[:10000]}\nRULES: Reference [FILE:...] tags. Include 'JOB TASK TO SKILL MAPPING' table. Use Bloom's Taxonomy.\nSECTIONS: {MANDATORY_SECTIONS}"
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
         
         st.session_state.design_out = res.choices[0].message.content
@@ -180,7 +175,7 @@ if st.session_state.design_out:
     c1, c2, c3 = st.columns([1,1,1])
     c1.download_button("📄 Download PDF", data=st.session_state.pdf_f, file_name=f"{pn}_TDD.pdf", use_container_width=True)
     c2.download_button("📝 Download Word", data=st.session_state.word_f, file_name=f"{pn}_TDD.docx", use_container_width=True)
-    if c3.button("🔄 Reset"): st.rerun()
+    if c3.button("🔄 Reset Agent"): st.rerun()
     
     st.markdown("---")
     st.markdown(st.session_state.design_out)
