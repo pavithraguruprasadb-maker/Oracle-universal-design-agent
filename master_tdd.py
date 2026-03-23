@@ -277,7 +277,9 @@ def extract_master_content(file, ocr_enabled: bool = False) -> str:
 
 
 # ── 4. PDF Builder ────────────────────────────────────────────────────────────
-def build_pdf(content: str,    buf = io.BytesIO()
+
+def build_pdf(content, title):
+    buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
         pagesize=landscape(A4),
@@ -306,6 +308,7 @@ def build_pdf(content: str,    buf = io.BytesIO()
         line = line.strip()
         if not line:
             continue
+        # Check for headers to apply formatting
         if any(sec in line.upper() for sec in MANDATORY_SECTIONS) and "---" in line:
             elements.append(Spacer(1, 10))
             elements.append(Paragraph(line.replace("-", ""), header_style))
@@ -313,7 +316,10 @@ def build_pdf(content: str,    buf = io.BytesIO()
             try:
                 elements.append(Paragraph(line, body_style))
             except Exception:
-                elements.append(Paragraph(re.sub(r"[^\x20-\x7E]", " ", line), body_style))
+                # Fallback for special characters that might break the PDF
+                clean_line = re.sub(r"[^\x20-\x7E]", " ", line)
+                elements.append(Paragraph(clean_line, body_style))
+    
     doc.build(elements)
     buf.seek(0)
     return buf
