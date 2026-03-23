@@ -102,15 +102,33 @@ st.title("📘 Universal Design Agent")
 c1, c2 = st.columns(2)
 pn = c1.text_input("Product Pillar", value="Oracle Cloud EPM")
 cn = c2.text_input("Course Title", placeholder="e.g. Predictive Cash Forecasting")
-url_input = st.text_input("🔗 Documentation URL", placeholder="Paste Oracle Help Center link here...")
+# Allows multiple lines of text
+url_inputs = st.text_area(
+    "🔗 Documentation URLs", 
+    placeholder="Paste each Oracle link on a new line...\nhttps://docs.oracle.com/link1\nhttps://docs.oracle.com/link2",
+    help="You can provide multiple links. The agent will analyze all of them."
+)
 jt = st.text_area("Job Task Analysis (JTA)")
 files = st.file_uploader("📂 Source Files", type=["pdf", "pptx", "pptm", "docx"], accept_multiple_files=True)
 
-# --- Orchestrator ---
+# --- Updated Orchestrator for Multiple URLs ---
 if st.button("🚀 Generate Reliable Design", use_container_width=True):
     with st.status("🛠️ Analyzing Multi-Source Knowledge...", expanded=True) as status:
+        
+        # 1. Gather Gold Standard
         bench = extract_master_content(custom_bench, use_ocr) if custom_bench else GOLD_STANDARD_FALLBACK
-        all_src = "".join([extract_master_content(f, use_ocr) for f in files]) + extract_url_content(url_input)
+        
+        # 2. Extract from all uploaded Files
+        file_src = "".join([extract_master_content(f, use_ocr) for f in files])
+        
+        # 3. Extract from ALL URLs (Line-by-line)
+        url_list = [u.strip() for u in url_inputs.split('\n') if u.strip()]
+        url_src = ""
+        for link in url_list:
+            url_src += extract_url_content(link)
+        
+        # 4. Combine everything into one "Knowledge Bucket"
+        all_src = file_src + url_src
         
         try:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -127,7 +145,8 @@ if st.button("🚀 Generate Reliable Design", use_container_width=True):
             res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
             st.session_state.design_out = res.choices[0].message.content
             status.update(label="✅ Generation Complete!", state="complete")
-        except Exception as e: st.error(f"Brain Error: {e}")
+        except Exception as e: 
+            st.error(f"Brain Error: {e}")
 
 # --- Results ---
 if st.session_state.design_out:
