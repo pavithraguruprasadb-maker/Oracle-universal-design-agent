@@ -888,13 +888,19 @@ def _add_section_header(doc, title):
     tbl = doc.add_table(rows=1, cols=1)
     tbl.style = "Table Grid"
     cell = tbl.rows[0].cells[0]
-    _set_cell_bg(cell, _C_NAVY); _set_cell_padding(cell, 80, 80, 160, 160)
+    _set_cell_bg(cell, _C_RED)          # Changed from _C_NAVY → _C_RED for distinction
+    _set_cell_padding(cell, 100, 100, 180, 180)
     p = cell.paragraphs[0]; p.clear()
-    run = p.add_run(title)
-    run.font.bold = True; run.font.size = Pt(11)
-    run.font.color.rgb = _rgb(_C_WHITE); run.font.name = "Calibri"
+    run = p.add_run(f"  {title}")
+    run.font.bold      = True
+    run.font.size      = Pt(12)         # Slightly larger
+    run.font.color.rgb = _rgb(_C_WHITE)
+    run.font.name      = "Calibri"
+    run.font.all_caps  = True           # ALL CAPS for visual weight
     sp = doc.add_paragraph("")
-    sp.paragraph_format.space_before = Pt(0); sp.paragraph_format.space_after = Pt(4)
+    sp.paragraph_format.space_before = Pt(0)
+    sp.paragraph_format.space_after  = Pt(6)
+
 
 
 def _add_sub_heading(doc, title):
@@ -903,6 +909,19 @@ def _add_sub_heading(doc, title):
     run.font.bold = True; run.font.size = Pt(10.5)
     run.font.color.rgb = _rgb(_C_RED); run.font.name = "Calibri"
     p.paragraph_format.space_before = Pt(8); p.paragraph_format.space_after = Pt(3)
+    return p
+def _add_gtm_sub_heading(doc, title):
+    """Small inline sub-heading for GTM items like 'Business Problems Solved:'"""
+    p = doc.add_paragraph()
+    run = p.add_run(f"  {title}")        # leading spaces = indent effect
+    run.font.bold      = True
+    run.font.size      = Pt(10)
+    run.font.italic    = True
+    run.font.color.rgb = _rgb(_C_BLUE)  # Blue, distinct from the red sub-heading
+    run.font.name      = "Calibri"
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after  = Pt(2)
+    p.paragraph_format.left_indent  = Inches(0.25)
     return p
 
 
@@ -960,57 +979,107 @@ def build_word(content: str, title: str) -> io.BytesIO:
     _add_cover_page(doc, title, gen_date, product="Oracle University",
                     roles="See Persona Section", level="See Course Overview")
     segments = parse_markdown_tables(content)
+
+    # GTM-specific small sub-heading labels
+    GTM_SUB_LABELS = {"Business Problems Solved:", "Learner Takeaways:"}
+
     for seg in segments:
         if seg[0] == "table":
             _, headers, rows = seg
             _style_table(doc, headers, rows)
         else:
+            _current_section = ""  # track which section we are in
+
             for line in seg[1].splitlines():
                 line = line.strip()
                 if not line:
                     continue
+
+                # ── A: Track current section ──────────────────────────────────
+                sec_match_check = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
+                if sec_match_check:
+                    _current_section = sec_match_check.group(1).strip()
+
+                # ── Section header (major heading band) ───────────────────────
                 sec_match = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
                 if sec_match:
-                    _add_section_header(doc, sec_match.group(1).strip()); continue
+                    _add_section_header(doc, sec_match.group(1).strip())
+                    continue
+
+                # ── C: GTM sub-headings (must come BEFORE kv_match) ───────────
+                if any(line.startswith(label) for label in GTM_SUB_LABELS):
+                    _add_gtm_sub_heading(doc, line)
+                    continue
+
+                # ── B: Key-value lines with indent ────────────────────────────
                 kv_match = re.match(r"^([A-Z][A-Za-z\s/\-]{1,40})\s*:\s*(.+)$", line)
                 if kv_match:
                     p = doc.add_paragraph()
-                    p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
+                    p.paragraph_format.left_indent  = Inches(0.3)
                     key_run = p.add_run(kv_match.group(1) + ": ")
                     key_run.bold = True; key_run.font.size = Pt(10)
                     key_run.font.name = "Calibri"; key_run.font.color.rgb = _rgb(_C_NAVY)
                     val_run = p.add_run(kv_match.group(2))
                     val_run.font.size = Pt(10); val_run.font.name = "Calibri"
-                    val_run.font.color.rgb = _rgb(_C_DARK_TEXT); continue
+                    val_run.font.color.rgb = _rgb(_C_DARK_TEXT)
+                    continue
+
+                # ── Sub-heading (title-case lines ending with colon) ──────────
                 if (line.endswith(":") and len(line) < 70
                         and (line == line.title() + ":" or line == line.upper())):
-                    _add_sub_heading(doc, line); continue
+                    _add_sub_heading(doc, line)
+                    continue
+
+                # ── Numbered section titles or ALL-CAPS labels ────────────────
                 if re.match(r"^\d+[a-z]?\.\s+[A-Z]", line) or re.match(r"^[A-Z]{2,}[\s:–]", line):
                     p = doc.add_paragraph()
-                    p.paragraph_format.space_before = Pt(6); p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.space_before = Pt(6)
+                    p.paragraph_format.space_after  = Pt(2)
                     run = p.add_run(line); run.bold = True; run.font.size = Pt(10)
-                    run.font.name = "Calibri"; run.font.color.rgb = _rgb(_C_BLUE); continue
+                    run.font.name = "Calibri"; run.font.color.rgb = _rgb(_C_BLUE)
+                    continue
+
+                # ── D: Bullet points with deeper indent ───────────────────────
                 if line.startswith(("- ", "• ", "* ", "· ")):
                     p = doc.add_paragraph(style="List Bullet")
-                    p.paragraph_format.left_indent = Inches(0.3)
-                    p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
-                    run = p.add_run(line[2:]); run.font.size = Pt(10); run.font.name = "Calibri"; continue
+                    p.paragraph_format.left_indent  = Inches(0.5)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
+                    run = p.add_run(line[2:])
+                    run.font.size = Pt(10); run.font.name = "Calibri"
+                    continue
+
+                # ── Numbered lists ────────────────────────────────────────────
                 if re.match(r"^\d+[\.\)]\s", line):
                     p = doc.add_paragraph(style="List Number")
-                    p.paragraph_format.left_indent = Inches(0.3)
-                    p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
+                    p.paragraph_format.left_indent  = Inches(0.3)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
                     run = p.add_run(re.sub(r"^\d+[\.\)]\s", "", line))
-                    run.font.size = Pt(10); run.font.name = "Calibri"; continue
+                    run.font.size = Pt(10); run.font.name = "Calibri"
+                    continue
+
+                # ── Citation / source tags ────────────────────────────────────
                 if re.match(r"^\[(FILE|URL|ORACLE)", line):
                     p = doc.add_paragraph()
-                    p.paragraph_format.left_indent = Inches(0.2)
-                    p.paragraph_format.space_before = Pt(0); p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.left_indent  = Inches(0.2)
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after  = Pt(2)
                     run = p.add_run(line); run.font.size = Pt(8.5); run.font.italic = True
-                    run.font.name = "Calibri"; run.font.color.rgb = _rgb("6B7280"); continue
+                    run.font.name = "Calibri"; run.font.color.rgb = _rgb("6B7280")
+                    continue
+
+                # ── D: Plain body paragraph with indent ───────────────────────
                 p = doc.add_paragraph()
-                p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(3)
-                run = p.add_run(line); run.font.size = Pt(10); run.font.name = "Calibri"
+                p.paragraph_format.space_before = Pt(1)
+                p.paragraph_format.space_after  = Pt(3)
+                p.paragraph_format.left_indent  = Inches(0.3)
+                run = p.add_run(line)
+                run.font.size = Pt(10); run.font.name = "Calibri"
                 run.font.color.rgb = _rgb(_C_DARK_TEXT)
+
     doc.add_paragraph("")
     footer_p = doc.add_paragraph()
     footer_run = footer_p.add_run(
@@ -1020,6 +1089,7 @@ def build_word(content: str, title: str) -> io.BytesIO:
     footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     buf = io.BytesIO(); doc.save(buf); buf.seek(0)
     return buf
+
 
 
 # ── 7. PDF Builder ────────────────────────────────────────────────────────────
