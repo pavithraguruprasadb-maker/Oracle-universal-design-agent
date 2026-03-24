@@ -1,17 +1,4 @@
 """
-Oracle University — Training Design Agent  (Final Version)
-Full-Stack: Multi-Step Streamlit Frontend + AI Backend (Groq / LLaMA-3.3-70B)
-
-Changes in this version:
-  - Output strictly follows the Oracle Design Document Template (Product & Vision Mapping)
-  - Sample design document updated to match real Oracle AI Agent Studio TDD
-  - All 9 mandatory sections aligned to template: Product Context, User Goal/Vision Mapping,
-    Learner Personas, Persona Responsibilities Table, Learning Outcomes, Learner Journey,
-    GTM Messaging, Course Structure & Outline, QA Checklist
-  - Job Role field: multiselect list + free-text custom role entry
-  - Format validator updated to check real template sections
-  - Reliability audit updated to match real section names
-
 Oracle University — Training Design Agent  (Enhanced v2)
 Full-Stack: Multi-Step Streamlit Frontend + AI Backend (Groq / LLaMA-3.3-70B)
 
@@ -79,16 +66,13 @@ st.set_page_config(
 
 
 # ─── MANDATORY SECTIONS ───────────────────────────────────────────────────────
-# Sections exactly matching the Oracle Design Document Template
 MANDATORY_SECTIONS = [
-    "PRODUCT CONTEXT",
-    "USER GOAL / VISION MAPPING",
-    "LEARNER PERSONAS",
-    "PERSONA RESPONSIBILITIES AND FOCUS AREAS",
-    "LEARNING OUTCOMES",
-    "LEARNER JOURNEY",
+    "COURSE OVERVIEW",
+    "PERSONA INFORMATION",
+    "IMPLEMENTATION READINESS",
     "GTM MESSAGING",
-    "COURSE STRUCTURE AND OUTLINE",
+    "COURSE COVERAGE TABLE",
+    "CASE STUDY",
     "QA CHECKLIST",
 ]
 
@@ -158,135 +142,107 @@ if os.path.exists(_SAMPLE_FILE):
         SAMPLE_DESIGN_DOCUMENT = _f.read()
 else:
     SAMPLE_DESIGN_DOCUMENT = """
-=== REFERENCE SAMPLE — Oracle AI Agent Studio Training Design Document ===
-Match this EXACT structure, level of detail, and professional tone.
+=== REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE ===
 
---- PRODUCT CONTEXT
-Product: Oracle AI Agent Studio for Fusion Applications
-Oracle AI Agent Studio is a user-friendly developer platform for creating, extending,
-deploying, and managing AI agents across an organization. Available from Fusion 25C,
-it lets users tailor AI agents to automate business processes while keeping control
-of AI agent behaviour. [ORACLE KNOWLEDGE BASE]
+--- COURSE OVERVIEW
+Course Title : Oracle Integration Cloud Fundamentals
+Product      : Oracle Integration Cloud (OIC) 3.0
+Duration     : 12 hours (8 × 90-min modules)
+Delivery     : Instructor-led + self-paced eLearning
+Version      : Jan 2025 | Oracle University
 
---- USER GOAL / VISION MAPPING
-User Goal: Customer has already implemented Oracle Fusion and wants to adopt the 25C
-new feature, AI Agent Studio, to automate existing business processes.
+This course equips Developers and Integration Architects with the skills to design,
+build, and monitor enterprise integrations using Oracle Integration Cloud. Learners
+will exit the course able to configure REST and SOAP adapters, build orchestration
+flows, and instrument error handling and monitoring dashboards.
 
-The product enables users to:
-• Identify business processes suitable for AI automation.
-• Build and deploy agents using pre-built templates or from scratch.
-• Integrate LLMs and configure human-in-the-loop validation.
-• Monitor agent performance across HR, Finance, SCM, Sales, and CX.
+80/20 Rationale: The two capabilities — REST adapter configuration and Orchestration
+flow design — account for ~80 % of production OIC usage. Modules 3–6 therefore
+receive the deepest treatment. [ORACLE KNOWLEDGE BASE]
 
---- LEARNER PERSONAS
-Primary Personas: Fusion Apps Admins, IT Admins, Fusion Functional Leads/Consultants,
-and Fusion Technical Leads/Consultants.
+--- PERSONA INFORMATION
+Primary Persona : Integration Developer
+  Pain Points   : Manual data movement between SaaS/on-prem systems, brittle custom
+                  scripts, lack of visibility into integration failures.
+  Motivation    : Reduce integration backlog; demonstrate architectural competence.
+  Tech Savviness: Comfortable with REST APIs and basic SQL; new to OIC.
+  Success Metric: # integrations delivered per sprint.
 
-Primary Persona: Fusion Apps Admin / IT Admin
-  Pain Points   : Manual, repetitive business processes; no visibility into AI decisions;
-                  uncertainty about which processes are automation candidates.
-  Motivation    : Reduce operational overhead; demonstrate value of AI investment.
-  Tech Savviness: Moderate; familiar with Fusion configuration, not a developer.
-  Success Metric: Number of automated workflows deployed; reduction in manual effort.
+Secondary Persona: IT Manager
+  Pain Points   : Governance gaps, unpredictable error storms, audit failures.
+  Motivation    : Centralise integration governance; reduce on-call incidents.
+  Tech Savviness: Non-coder; relies on dashboards and reports.
+  Success Metric: System uptime; incident MTTR.
 
-Secondary Persona: Fusion Functional / Technical Consultant
-  Pain Points   : Clients demand AI solutions with unclear implementation paths;
-                  difficulty justifying LLM choices; governance concerns.
-  Motivation    : Become a trusted advisor on Oracle AI Agent Studio.
-  Tech Savviness: High; comfortable with APIs, extensions, and integrations.
-  Success Metric: Successful agent deployments per engagement.
+--- IMPLEMENTATION READINESS
+Prerequisites:
+  • Oracle Cloud account with OIC provisioned (trial or production)
+  • Basic REST/SOAP API knowledge
+  • Completed "OCI Foundations" badge (recommended)
 
---- PERSONA RESPONSIBILITIES AND FOCUS AREAS
-| What Will the Key Personas Focus On? | What will this Training Cover? | Assessment Topics |
-|--------------------------------------|-------------------------------|-------------------|
-| Awareness of Agent Studio and how it works | Core features, platform capabilities, how to build/configure/deploy agents | Identify core components; explain Agent Studio's role in Oracle's AI ecosystem |
-| Understand existing business processes and identify automation opportunities | Analysing business processes; single vs. multi-agent case studies; real use cases | Identify suitable processes for AI; distinguish single vs. multiple agent scenarios |
-| Decide LLM provider based on org's chat setup | Configure LLMs with Agent Studio; LLM selection guidance | Select appropriate LLM; configure integration; compare LLM choices |
-| Configure human-in-the-loop validation | Identify processes requiring human intervention; extend agents via APIs | Configure human intervention points; extend agents to external services |
-| Create, configure and deploy agents | Agent creation using templates; multi-agent teams; deployment across functions | Create and deploy agents across functions; build multi-agent teams |
-| Test and validate agent output | Test agents at design time; trace decision-making; validate before go-live | Test outputs; use validation tools; resolve issues before deployment |
-
---- LEARNING OUTCOMES
-After completing this course, you should be able to:
-1. Describe the purpose, architecture, and core capabilities of Oracle AI Agent Studio. [ORACLE KNOWLEDGE BASE]
-2. Identify business processes suitable for AI agent automation using process analysis frameworks.
-3. Determine whether single or multi-agent configurations are appropriate for a given scenario.
-4. Configure Large Language Model (LLM) integration within Oracle AI Agent Studio.
-5. Create, configure, and deploy AI agents using pre-built templates and natural language prompts.
-6. Customise AI agents beyond out-of-the-box capabilities by extending them to external services and APIs.
-7. Implement human-in-the-loop validation checkpoints within AI agent workflows.
-8. Test, trace, and validate AI agent behaviour before production deployment.
-9. Monitor and manage deployed AI agents across functional areas (HR, Finance, SCM, Sales, CX).
-
---- LEARNER JOURNEY
-Target Audience Level: Advanced / Specialised — not a beginner course.
-
-Recommended prerequisite sequence:
-  1. Oracle Fusion Applications Fundamentals (specific module, e.g. HCM or SCM) — REQUIRED
-  2. General AI Awareness (LLMs, AI concepts) — Recommended
-  3. AI Foundation for Specific Fusion Modules (if available) — Recommended
-  4. THIS COURSE: Oracle AI Agent Studio Training
-
-This course sits at the Advanced/Specialised stage. Learners must already understand
-the Fusion modules they are automating.
+Environment Requirements:
+  • OIC 3.0 instance (Gen 3 preferred)
+  • Sample REST endpoint (provided as lab utility)
+  • Access to Oracle Identity Cloud Service (IDCS)
 
 --- GTM MESSAGING
-Course: Oracle AI Agent Studio for Fusion Applications
-
-USP: Turn your Oracle Fusion expertise into AI-powered automation — no coding required.
+USP: Rapidly build enterprise-grade integrations on OIC without writing a single line
+of middleware code.
 
 Business Problems Solved:
-  1. Repetitive manual processes consuming admin and consultant time
-  2. Unclear path to adopting AI in existing Fusion deployments
-  3. Governance gaps around AI decision-making and human oversight
-  4. Fragmented LLM setup with no centralised agent management
-  5. Lack of skills to test and validate AI agent behaviour pre-deployment
+  1. Fragile custom-script integrations breaking on schema changes
+  2. No centralised visibility into integration health
+  3. Long time-to-market for new SaaS onboarding
+  4. Compliance gaps due to undocumented data flows
 
-Who it is for: Fusion Apps Admins, IT Admins, Functional/Technical Leads and Consultants
-on Oracle Fusion 25C and above.
+Learner Takeaways:
+  1. Configure and test REST & SOAP adapters end-to-end
+  2. Design orchestration flows with branching and looping
+  3. Implement global fault handlers and notification alerts
+  4. Monitor integration activity using built-in dashboards
+  5. Apply OIC best practices for naming, versioning, and governance
 
-Learner Takeaways (business outcomes):
-  1. Independently identify and prioritise business processes for AI automation
-  2. Design and deploy single or multi-agent solutions using Agent Studio
-  3. Configure LLM integration aligned to the organisation's chat platform
-  4. Implement human approval checkpoints in AI workflows
-  5. Deploy agents across HR, Finance, Supply Chain, Sales, and CX
-  6. Test and validate agent behaviour with built-in explainability tools
-  7. Monitor and continuously improve deployed agents in production
+--- COURSE COVERAGE TABLE
+| Module # | Module Title | Topics | Bloom's Level | Activity Type | Duration | Source Ref |
+|----------|-------------|--------|---------------|---------------|----------|------------|
+| 1 | OIC Architecture & Concepts | Platform overview, tenancy, service limits | Remember | Concept + Quiz | 60 min | [URL: docs.oracle.com/oic] |
+| 2 | Connection Configuration | REST, SOAP, DB adapters; security policies | Understand | Demo + Lab | 90 min | [FILE: OIC_AdminGuide.pdf] |
+| 3 | Building Your First Integration | Trigger, action, map; activate & test | Apply | Lab (guided) | 90 min | [FILE: OIC_AdminGuide.pdf] |
+| 4 | Orchestration Flows | Switch, for-each, parallel actions | Apply/Analyse | Lab + Scenario | 90 min | [URL: docs.oracle.com/oic] |
+| 5 | Data Mapping & Transformation | XSLT mapper, JMESPATH, lookups | Analyse | Demo + Lab | 90 min | [ORACLE KNOWLEDGE BASE] |
+| 6 | Error Handling & Alerts | Fault handlers, retry policies, email alerts | Analyse | Lab + Case Study | 90 min | [FILE: OIC_AdminGuide.pdf] |
+| 7 | Monitoring & Observability | Activity stream, dashboards, tracking fields | Evaluate | Demo + Scenario | 60 min | [URL: docs.oracle.com/oic] |
+| 8 | Governance & Best Practices | Naming conventions, versioning, export/import | Evaluate/Create | Case Study + Peer Review | 60 min | [ORACLE KNOWLEDGE BASE] |
 
---- COURSE STRUCTURE AND OUTLINE
-| Module # | Module Title | Module Learning Outcome | Topic List | Duration (Mins) | Hands-On Lab | Lab Duration (Mins) |
-|----------|--------------|------------------------|------------|-----------------|--------------|---------------------|
-| 1 | Introduction to Oracle AI Agent Studio | Describe purpose and core capabilities of Agent Studio | Overview of Agent Studio; products supported; key benefits; target personas; how the agent arrives at a decision | 30 | None | — |
-| 2 | Identifying Business Processes for AI Automation | Identify suitable processes; decide single vs. multi-agent | Analysing existing business processes; single vs. multi-agent decision framework; use cases (Unified Employee Assistant, Procure-to-Pay Agent) | 45 | Case study exercise: map 3 business processes | 20 |
-| 3 | Core Features and Functionality | Identify and explain core components and features | Agent templates; natural language prompts; tool overview; Agent Builder for Fusion; extension/customisation concepts | 45 | Demo: navigate Agent Studio UI | 15 |
-| 4 | Configuring Large Language Models (LLMs) | Configure and integrate LLMs with Agent Studio | Configure LLMs; set up LLM integration; select the right LLM; compare and justify LLM choices | 30 | Lab: configure LLM integration in sandbox | 20 |
-| 5 | Customisation and Extending AI Agents | Customise agents beyond OOB; extend to external APIs | Human-in-the-loop identification; configure intervention points; extend agents to external services/APIs | 45 | Lab: add human approval step to an agent | 20 |
-| 6 | Creating, Configuring and Deploying AI Agents | Create and deploy agents across functional areas | Create/configure/deploy using templates; multi-agent teams; managing agents; deploying across HR, Finance, SCM | 60 | Lab: build and deploy an HR agent end-to-end | 30 |
-| 7 | Testing and Validating AI Agents | Test and validate agent output before go-live | Testing at design time; trace agent decision-making; validation tools; identify and resolve issues | 45 | Lab: test and trace a deployed agent | 20 |
-| 8 | Managing and Monitoring Deployed AI Agents | Manage and monitor agents in production | Tools for managing agents; monitoring performance; identifying optimisation opportunities | 30 | Demo: monitoring dashboard | 10 |
-| | Skill Check | | Final assessment: 40 questions (MCQ + scenario-based) | 30 | | |
-| | Downloadable Job Aid | | Quick Reference Guide: Agent Studio setup checklist | — | | |
-| TOTAL | | | | 360 mins (6 hrs) | | 135 mins |
+--- CASE STUDY
+Scenario: A regional bank needs to synchronise new customer records created in
+Salesforce CRM with Oracle ERP Cloud within 15 minutes of account creation.
 
-Sequencing rationale: Modules follow a strict foundational-to-advanced chain. Module 1
-provides conceptual grounding. Modules 2–3 build analytical and platform literacy.
-Modules 4–7 introduce progressively complex configuration and deployment tasks.
-Module 8 covers ongoing governance. Each module explicitly depends on the prior one.
+Challenge: The existing nightly batch job misses intra-day trades linked to new
+accounts, causing reconciliation failures.
+
+Solution Path (learner builds):
+  Step 1 — Create a Salesforce trigger connection authenticated via OAuth 2.0.
+  Step 2 — Create an Oracle ERP Cloud action connection.
+  Step 3 — Build an event-driven orchestration flow (trigger: new Account created).
+  Step 4 — Map Salesforce Account fields to ERP Customer schema using the visual mapper.
+  Step 5 — Add a fault handler that fires an email alert on mapping failure.
+  Step 6 — Activate, test with a sandbox record, and verify in Activity Stream.
+
+Expected Outcome: Sub-minute synchronisation; zero unhandled faults.
+[FILE: OIC_CaseStudy_Bank.pdf]
 
 --- QA CHECKLIST
 | # | Check | Pass/Fail |
 |---|-------|-----------|
-| 1 | All learning outcomes begin with a Bloom's verb and are SMART | ✅ |
-| 2 | Each module has Concept + Demo/Case Study + Lab activity | ✅ |
-| 3 | Bloom's levels match audience (Advanced/Specialised) | ✅ |
+| 1 | All objectives use SMART Bloom's verbs | ✅ |
+| 2 | Each module has Concept + Demo + Lab + Scenario | ✅ |
+| 3 | Bloom's level matches audience (Intermediate) | ✅ |
 | 4 | Prerequisites stated and honoured in Module 1 | ✅ |
 | 5 | Lab-to-concept ratio ≥ 1:1 | ✅ |
 | 6 | Every factual claim carries a source citation | ✅ |
-| 7 | Total seat time estimated (6 hrs content + 2.25 hrs labs) | ✅ |
+| 7 | Total seat time estimated (12 hr) | ✅ |
 | 8 | Modules arranged foundational → advanced | ✅ |
-| 9 | GTM messaging includes USP, business problems, and learner takeaways | ✅ |
-| 10 | Persona table includes pain points, motivation, tech savviness, success metric | ✅ |
 
 === END REFERENCE SAMPLE ===
 """
@@ -372,10 +328,6 @@ def init_state():
         "feedback_text": "",
         "show_feedback": False,
         "gen_error": "",
-        "use_sample_benchmark": True,
-        "benchmark_doc_text": "",       # extracted text from user-uploaded benchmark PDF/DOCX
-        "benchmark_doc_name": "",       # filename shown in the UI
-        "product_context": "",          # optional user-supplied product context for Step 1
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -394,8 +346,7 @@ def perform_reliability_audit(text: str) -> dict:
 
     # Section presence
     for sec in MANDATORY_SECTIONS:
-        # Support both "--- SECTION NAME" and plain "SECTION NAME" headers
-        found = re.search(rf"(---?\s*)?{re.escape(sec)}", text, re.IGNORECASE)
+        found = re.search(rf"---?\s*{sec}", text, re.IGNORECASE)
         audit["sections"][sec] = bool(found)
 
     # Traceability tags
@@ -825,9 +776,6 @@ def build_master_prompt(
     all_knowledge: str,
     additional_notes: str,
     feedback: str = "",
-    use_sample_benchmark: bool = True,
-    uploaded_benchmark_text: str = "",
-    product_context: str = "",
 ) -> str:
 
     feedback_block = (
@@ -838,76 +786,6 @@ def build_master_prompt(
     )
     prereqs_block  = prereqs if prereqs.strip() else "None specified."
     audience_block = audience_desc if audience_desc.strip() else "Not specified — infer from job roles."
-
-    # Build the product context block — only included when user provides input
-    if product_context.strip():
-        product_context_block = f"""
-═══════════════════════════════════════
-USER-PROVIDED PRODUCT CONTEXT (HIGH PRIORITY — USE THIS TO INFORM ALL SECTIONS)
-═══════════════════════════════════════
-The user has provided the following specific context about the product.
-This information takes priority over general knowledge. Use it to:
-  • Write the PRODUCT CONTEXT section of the document
-  • Inform the USER GOAL / VISION MAPPING section
-  • Shape the LEARNER PERSONAS and their pain points
-  • Influence the course module topics and learning outcomes
-  • Enrich the GTM MESSAGING section
-
-{product_context.strip()}
-═══════════════════════════════════════"""
-    else:
-        product_context_block = (
-            "User-Provided Product Context : Not provided — "
-            "infer from product name, job roles and source knowledge."
-        )
-
-    if use_sample_benchmark:
-        # Prefer the user-uploaded benchmark; fall back to the built-in sample
-        if uploaded_benchmark_text.strip():
-            benchmark_content = uploaded_benchmark_text[:25000]
-            benchmark_source  = "USER-UPLOADED APPROVED SAMPLE DOCUMENT"
-        else:
-            benchmark_content = SAMPLE_DESIGN_DOCUMENT
-            benchmark_source  = "BUILT-IN ORACLE AI AGENT STUDIO SAMPLE (fallback)"
-
-        sample_benchmark_block = f"""═══════════════════════════════════════
-REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE  [BENCHMARK: ON]
-Source: {benchmark_source}
-═══════════════════════════════════════
-Study the sample document below with great care.
-This is a management-approved, completed Training Design Document.
-Your generated output MUST align with it on ALL of the following dimensions:
-
-  1. TONE & LANGUAGE — Match the professional, learner-centric writing style exactly.
-     Use the same level of formality, sentence structure and terminology.
-
-  2. SECTION DEPTH — Each section must be as detailed and thorough as in the sample.
-     Do not produce shorter or thinner sections than the sample shows.
-
-  3. TABLE STRUCTURE — Replicate the exact column definitions, row density
-     and formatting style of every table in the sample.
-
-  4. LEARNING OUTCOMES — Phrase outcomes with the same Bloom's verb style,
-     specificity and business-outcome orientation as the sample.
-
-  5. MODULE DESIGN — Match the sample's pattern for topic lists, lab descriptions,
-     duration estimates and skill checks.
-
-  6. CITATION DISCIPLINE — Apply [FILE:], [URL:] and [ORACLE KNOWLEDGE BASE] tags
-     in the same manner as the sample document.
-
-=== SAMPLE DOCUMENT BEGIN ===
-{benchmark_content}
-=== SAMPLE DOCUMENT END ==="""
-
-    else:
-        sample_benchmark_block = """═══════════════════════════════════════
-SAMPLE BENCHMARK  [BENCHMARK: OFF — User has disabled sample reference]
-═══════════════════════════════════════
-No sample reference document is provided for this generation.
-Generate the document using your own knowledge of Oracle instructional design
-best practices, strictly following the required output structure below.
-Aim for professional, detailed, learner-centric language throughout."""
 
     return f"""
 ACT AS: Senior Oracle Instructional Designer at Oracle University.
@@ -924,7 +802,6 @@ Prerequisite Skills : {prereqs_block}
 Business Outcomes   : {biz_outcomes if biz_outcomes.strip() else "Not specified — derive from product and roles."}
 Additional Notes    : {additional_notes if additional_notes.strip() else "None."}
 {feedback_block}
-{product_context_block}
 
 ═══════════════════════════════════════
 SOURCE KNOWLEDGE (semantically classified — extracted from files + URLs)
@@ -947,80 +824,39 @@ Modules MUST follow a strict prerequisite chain:
   • Inside the COURSE COVERAGE TABLE, add a "Prerequisites" mini-column or note.
   • After the table, add one paragraph justifying the module ordering.
 
-{sample_benchmark_block}
+═══════════════════════════════════════
+REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE
+═══════════════════════════════════════
+Study the sample below. Your output must match its section depth, table structure,
+prose density, and citation discipline.
+
+{SAMPLE_DESIGN_DOCUMENT}
 
 ═══════════════════════════════════════
-REQUIRED OUTPUT STRUCTURE
-Strictly follow the Oracle Design Document Template sections below.
-Use EXACTLY these section headers (with --- prefix).
+REQUIRED OUTPUT STRUCTURE (use EXACTLY these headers)
 ═══════════════════════════════════════
-
---- PRODUCT CONTEXT
-Identify the product. Explain its purpose and what it enables.
-
---- USER GOAL / VISION MAPPING
-Describe how the product enables the user to achieve their goal.
-Cover the core use cases and value it delivers.
-
---- LEARNER PERSONAS
-Identify 1–2 key personas with:
-  • Role title
-  • Day-to-day pain points
-  • Motivation for taking the course
-  • Tech savviness level
-  • Primary success metric they are measured on
-
---- PERSONA RESPONSIBILITIES AND FOCUS AREAS
-A markdown table with exactly these 3 columns:
-| What Will the Key Personas Focus On? | What will this Training Cover to address the Requirement? | Assessment Topics / Ways to Measure Skills |
-
-Include 4–6 rows covering the main responsibility areas.
-
---- LEARNING OUTCOMES
-Begin with the sentence: "After completing this course, you should be able to:"
-List 6–10 outcomes. Each must:
-  • Begin with a Bloom's taxonomy verb appropriate for the experience level
-  • Be SMART (Specific, Measurable, Achievable, Relevant, Time-bound)
-  • Map to a real job task or business outcome
-  • Include a [SOURCE] citation
-
---- LEARNER JOURNEY
-Describe where this training fits in the overall learning path:
-  • Current knowledge level required
-  • Recommended prerequisite courses/sequence
-  • How this course advances the learner
-
+--- COURSE OVERVIEW
+--- PERSONA INFORMATION
+--- IMPLEMENTATION READINESS
 --- GTM MESSAGING
-Include all of:
-  • USP sentence (≤ 25 words)
-  • Who the course is for (roles)
-  • Business problems it solves (3–5 bullet points)
-  • Key learner takeaways phrased as business outcomes (5–7 points)
-
---- COURSE STRUCTURE AND OUTLINE
-A markdown table with these exact columns:
-| Module # | Module Title | Module Learning Outcome | Topic List | Duration (Mins) | Hands-On Lab | Lab Duration (Mins) |
-
-Requirements:
-  • 6–9 modules minimum
-  • Module 1 must be foundational (concepts/overview)
-  • Final rows must include: Skill Check row, Downloadable Job Aid row, TOTAL row
-  • Each module must have at least one hands-on lab
-  • Include a sequencing rationale paragraph after the table
-
+--- COURSE COVERAGE TABLE
+--- CASE STUDY
 --- QA CHECKLIST
-A markdown table:
+--- TRACEABILITY MAP
+
+Each section must be complete, detailed and grounded in the source knowledge above.
+
+COURSE COVERAGE TABLE must be a proper markdown table with these columns:
+| Module # | Module Title | Topics | Bloom's Level | Activity Type | Duration | Source Ref |
+
+QA CHECKLIST must be a proper markdown table with columns:
 | # | Check | Pass/Fail |
 
-Include at least 10 checks covering: Bloom's verbs, activity mix, prerequisites,
-lab ratio, citations, seat time, module ordering, GTM completeness, persona depth.
-
---- TRACEABILITY MAP
-A markdown table:
+TRACEABILITY MAP must be a proper markdown table with columns:
 | Source Tag | Document Section(s) |
 
 Cite [FILE: filename] or [URL: link] for every factual claim.
-If no source available use: [ORACLE KNOWLEDGE BASE].
+If no source available: [ORACLE KNOWLEDGE BASE].
 """
 
 
@@ -1036,7 +872,7 @@ st.markdown("""
       <div class="topbar-sub">Oracle University · AI-Powered Document Generation</div>
     </div>
   </div>
-  <div class="topbar-badge">AI-Powered · Template v3</div>
+  <div class="topbar-badge">AI-Powered v2</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1100,32 +936,6 @@ if st.session_state.step == 1:
         value=st.session_state.product_name,
     )
 
-    st.markdown(
-        "**Product Context** "
-        "<span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>",
-        unsafe_allow_html=True,
-    )
-    product_context = st.text_area(
-        "Product Context", label_visibility="collapsed",
-        placeholder=(
-            "Describe the product in your own words — what it does, who it is for, "
-            "key features, business problems it solves, version or release context, "
-            "supported platforms, integration points…\n\n"
-            "Example: Oracle AI Agent Studio is a no-code platform available from Fusion 25C "
-            "that allows Fusion Admins and Consultants to build and deploy AI agents to "
-            "automate HR, Finance and SCM business processes without writing code."
-        ),
-        value=st.session_state.product_context,
-        height=130,
-    )
-    st.markdown(
-        "<div style='font-size:12px;color:#6B7280;margin-top:-8px;margin-bottom:12px'>"
-        "💡 The more context you provide, the more accurate and relevant your design document will be. "
-        "You can describe the product, its release, key personas, or any specific focus areas."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     # Enhancement 9: multi-select + free-text "other" role
     st.markdown(
         "**Associated Job Role(s)** <span style='color:#C74634'>*</span> "
@@ -1166,11 +976,10 @@ if st.session_state.step == 1:
             elif not combined_roles:
                 st.error("Please select or enter at least one job role.")
             else:
-                st.session_state.course_title    = course_title
-                st.session_state.product_name    = product_name
-                st.session_state.product_context = product_context
-                st.session_state.job_roles       = combined_roles
-                st.session_state.custom_role     = custom_role
+                st.session_state.course_title = course_title
+                st.session_state.product_name = product_name
+                st.session_state.job_roles    = combined_roles
+                st.session_state.custom_role  = custom_role
                 st.session_state.step = 2
                 st.rerun()
 
@@ -1355,153 +1164,6 @@ elif st.session_state.step == 3:
     )
     st.session_state.additional_notes = additional_notes
 
-    # ── Sample Benchmark Toggle + Upload ────────────────────────────────────
-    st.markdown("""
-    <div class="section-card" style="margin-top:18px">
-      <div class="section-header">
-        <div class="section-icon">🎯</div>
-        <div>
-          <div class="section-title">Quality Benchmark Settings</div>
-          <div class="section-sub">Upload a management-approved sample design document — the AI will match its tone, depth and structure exactly</div>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Toggle row ────────────────────────────────────────────────────────────
-    col_toggle, col_info = st.columns([1, 2])
-    with col_toggle:
-        use_sample_benchmark = st.toggle(
-            "Use Sample Design Document as Quality Benchmark",
-            value=st.session_state.use_sample_benchmark,
-            help=(
-                "When ON: upload a management-approved sample design document. "
-                "The AI will study it and match its level of detail, table structure, "
-                "prose density and tone exactly.\n\n"
-                "When OFF: the AI follows the template structure only, without any "
-                "sample reference."
-            ),
-        )
-        st.session_state.use_sample_benchmark = use_sample_benchmark
-
-    with col_info:
-        if use_sample_benchmark:
-            st.markdown(
-                """<div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;
-                padding:12px 16px;font-size:13px;color:#15803D;margin-top:4px'>
-                <strong>✅ Benchmark ON</strong> — Upload your approved sample document below.
-                The AI will align the generated output to match its tone, depth,
-                table structure and level of detail exactly.
-                </div>""",
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                """<div style='background:#FFF7ED;border:1px solid #FCD34D;border-radius:8px;
-                padding:12px 16px;font-size:13px;color:#92400E;margin-top:4px'>
-                <strong>⚠️ Benchmark OFF</strong> — No sample reference will be used.
-                The AI will follow the template structure only. Output quality may vary.
-                </div>""",
-                unsafe_allow_html=True
-            )
-
-    # ── Upload zone — only visible when toggle is ON ─────────────────────────
-    if use_sample_benchmark:
-        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
-
-        # Show currently loaded benchmark doc (if any)
-        if st.session_state.benchmark_doc_name:
-            st.markdown(
-                f"""<div style='background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;
-                padding:10px 16px;font-size:13px;color:#1D4ED8;margin-bottom:10px;
-                display:flex;align-items:center;gap:10px'>
-                📄 <strong>Loaded:</strong> {st.session_state.benchmark_doc_name}
-                &nbsp;·&nbsp; <span style='color:#15803D;font-weight:600'>✓ Ready for use</span>
-                </div>""",
-                unsafe_allow_html=True
-            )
-
-        benchmark_file = st.file_uploader(
-            "Upload Approved Sample Design Document",
-            type=["pdf", "docx"],
-            key="benchmark_uploader",
-            help="Upload a management-approved, completed design document (PDF or DOCX). "
-                 "The AI will use it as the quality and structure benchmark for the generated output.",
-            label_visibility="collapsed",
-        )
-
-        # Instructions panel
-        st.markdown(
-            """<div style='background:#F8FAFC;border:1px solid #DDE1E7;border-radius:8px;
-            padding:12px 16px;font-size:12px;color:#6B7280;margin-top:8px'>
-            <strong style='color:#1D1D1F'>📋 What to upload:</strong><br>
-            Upload a <strong>completed, management-approved</strong> Training Design Document
-            that is relevant to the product area you are designing for.<br><br>
-            <strong style='color:#1D1D1F'>What the AI will learn from it:</strong><br>
-            ✦ &nbsp;Level of detail in each section &nbsp;·&nbsp;
-            ✦ &nbsp;Table structure and column definitions &nbsp;·&nbsp;
-            ✦ &nbsp;Professional tone and writing style &nbsp;·&nbsp;
-            ✦ &nbsp;How learning outcomes are phrased &nbsp;·&nbsp;
-            ✦ &nbsp;Module depth and lab design patterns<br><br>
-            <strong style='color:#C74634'>Supported formats:</strong> PDF, DOCX &nbsp;·&nbsp;
-            <strong style='color:#C74634'>Max size:</strong> 20 MB
-            </div>""",
-            unsafe_allow_html=True
-        )
-
-        # Extract text from uploaded benchmark file
-        if benchmark_file is not None:
-            try:
-                ext = benchmark_file.name.split(".")[-1].lower()
-                if ext == "pdf":
-                    import pdfplumber, io as _io
-                    with pdfplumber.open(_io.BytesIO(benchmark_file.read())) as _pdf:
-                        extracted = "\n".join(
-                            (p.extract_text() or "") for p in _pdf.pages
-                        )
-                elif ext == "docx":
-                    from docx import Document as _DocxRead
-                    import io as _io
-                    _doc = _DocxRead(_io.BytesIO(benchmark_file.read()))
-                    extracted = "\n".join(p.text for p in _doc.paragraphs)
-                else:
-                    extracted = ""
-
-                if extracted.strip():
-                    st.session_state.benchmark_doc_text = extracted.strip()
-                    st.session_state.benchmark_doc_name = benchmark_file.name
-                    st.success(
-                        f"✅ **{benchmark_file.name}** loaded successfully — "
-                        f"{len(extracted.split()):,} words extracted. "
-                        f"The AI will use this as the quality benchmark."
-                    )
-                else:
-                    st.warning(
-                        "⚠️ Could not extract text from this file. "
-                        "Try a text-based PDF or DOCX (not a scanned image)."
-                    )
-            except Exception as _e:
-                st.error(f"❌ Error reading benchmark file: {_e}")
-
-        # Clear benchmark button
-        if st.session_state.benchmark_doc_name:
-            if st.button("🗑️ Remove benchmark document", key="clear_benchmark"):
-                st.session_state.benchmark_doc_text = ""
-                st.session_state.benchmark_doc_name = ""
-                st.rerun()
-
-        # Warn if toggle is ON but nothing uploaded yet
-        if not st.session_state.benchmark_doc_name:
-            st.markdown(
-                """<div style='background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;
-                padding:10px 14px;font-size:12px;color:#92400E;margin-top:8px'>
-                ⚠️ <strong>No document uploaded yet.</strong> Upload a sample above, or turn the
-                toggle OFF to generate without a benchmark. If you generate without uploading,
-                the AI will fall back to the built-in Oracle AI Agent Studio sample.
-                </div>""",
-                unsafe_allow_html=True
-            )
-
     st.divider()
     col_back, col_gen = st.columns(2)
     with col_back:
@@ -1606,9 +1268,6 @@ elif st.session_state.step == 4:
                 all_knowledge=all_knowledge,
                 additional_notes=st.session_state.additional_notes,
                 feedback=st.session_state.feedback_text,
-                use_sample_benchmark=st.session_state.get("use_sample_benchmark", True),
-                uploaded_benchmark_text=st.session_state.get("benchmark_doc_text", ""),
-                product_context=st.session_state.get("product_context", ""),
             )
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -1773,26 +1432,6 @@ elif st.session_state.step == 4:
                         st.warning("Please enter feedback before refining.")
 
         # ── Document Preview ──────────────────────────────────────────────────
-        benchmark_on   = st.session_state.get("use_sample_benchmark", True)
-        benchmark_name = st.session_state.get("benchmark_doc_name", "")
-        if benchmark_on and benchmark_name:
-            benchmark_tag = (
-                f"<span style='background:#DCFCE7;color:#15803D;font-size:11px;"
-                f"font-weight:600;padding:2px 8px;border-radius:12px'>"
-                f"🎯 Benchmark: {benchmark_name}</span>"
-            )
-        elif benchmark_on:
-            benchmark_tag = (
-                "<span style='background:#FEF9C3;color:#854D0E;font-size:11px;"
-                "font-weight:600;padding:2px 8px;border-radius:12px'>"
-                "🎯 Benchmark: built-in sample</span>"
-            )
-        else:
-            benchmark_tag = (
-                "<span style='background:#F3F4F6;color:#6B7280;font-size:11px;"
-                "font-weight:600;padding:2px 8px;border-radius:12px'>"
-                "⚠️ Benchmark OFF</span>"
-            )
         st.markdown(f"""
         <div class="doc-wrap">
           <div class="doc-body">
@@ -1802,7 +1441,6 @@ elif st.session_state.step == 4:
               <span>🏢 Oracle University</span>
               <span>🎯 {level}</span>
               <span>👤 {roles}</span>
-              <span>{benchmark_tag}</span>
             </div>
           </div>
         </div>
