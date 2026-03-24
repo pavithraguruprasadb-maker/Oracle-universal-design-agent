@@ -318,6 +318,10 @@ def init_state():
         "experience_level": "",
         "prereqs": "",
         "biz_outcomes": "",
+        "product_context": "",
+        "use_benchmark": False,
+        "benchmark_text": "",
+        "benchmark_filename": "",
         "urls": [{"type": "Product Docs", "url": ""}],
         "additional_notes": "",
         "generated": False,
@@ -775,6 +779,9 @@ def build_master_prompt(
     biz_outcomes: str,
     all_knowledge: str,
     additional_notes: str,
+    product_context: str = "",
+    benchmark_text: str = "",
+    benchmark_filename: str = "",
     feedback: str = "",
 ) -> str:
 
@@ -784,8 +791,9 @@ def build_master_prompt(
         if feedback.strip()
         else ""
     )
-    prereqs_block  = prereqs if prereqs.strip() else "None specified."
-    audience_block = audience_desc if audience_desc.strip() else "Not specified — infer from job roles."
+    prereqs_block   = prereqs if prereqs.strip() else "None specified."
+    audience_block  = audience_desc if audience_desc.strip() else "Not specified — infer from job roles."
+    context_block   = product_context.strip() if product_context.strip() else "Not provided."
 
     return f"""
 ACT AS: Senior Oracle Instructional Designer at Oracle University.
@@ -801,6 +809,11 @@ Experience Level    : {experience_level}
 Prerequisite Skills : {prereqs_block}
 Business Outcomes   : {biz_outcomes if biz_outcomes.strip() else "Not specified — derive from product and roles."}
 Additional Notes    : {additional_notes if additional_notes.strip() else "None."}
+
+Product Context     :
+{context_block}
+(Use the above to understand what the product does, who it serves, and the industry/org context
+ when writing the Course Overview, Persona, GTM Messaging, and Case Study sections.)
 {feedback_block}
 
 ═══════════════════════════════════════
@@ -827,10 +840,15 @@ Modules MUST follow a strict prerequisite chain:
 ═══════════════════════════════════════
 REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE
 ═══════════════════════════════════════
-Study the sample below. Your output must match its section depth, table structure,
-prose density, and citation discipline.
+{"GOLDEN STANDARD BENCHMARK (Management-Approved — " + benchmark_filename + ")" if benchmark_text.strip() else "BUILT-IN ORACLE REFERENCE SAMPLE"}
+Study the document below carefully. Your output MUST:
+  • Match its overall level of detail and section depth exactly.
+  • Mirror its prose density — if the sample writes 3–5 sentences per sub-topic, you must too.
+  • Replicate its table structure, column granularity, and row count scale.
+  • Adopt its tone (formal/semi-formal/conversational) and citation discipline precisely.
+  • Do NOT produce a shorter or shallower document than this benchmark.
 
-{SAMPLE_DESIGN_DOCUMENT}
+{benchmark_text[:18000] if benchmark_text.strip() else SAMPLE_DESIGN_DOCUMENT}
 
 ═══════════════════════════════════════
 REQUIRED OUTPUT STRUCTURE (use EXACTLY these headers)
@@ -960,6 +978,27 @@ if st.session_state.step == 1:
         help="Type any role not in the list above. It will be appended to your selections.",
     )
 
+    st.markdown(
+        "**Product Context** "
+        "<span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Briefly describe what the product does (3–5 sentences) and who it is built for "
+        "(industry / organization type). This context helps the AI tailor the design document more precisely."
+    )
+    product_context = st.text_area(
+        "Product Context", label_visibility="collapsed",
+        placeholder=(
+            "e.g. Oracle AI Agent Studio is a low-code platform that enables enterprises to design, "
+            "deploy, and monitor autonomous AI agents integrated with Oracle Cloud services. "
+            "It is primarily built for large financial-services and retail organizations that need to "
+            "automate complex, multi-step back-office workflows without deep ML expertise."
+        ),
+        value=st.session_state.product_context,
+        height=120,
+    )
+
     st.divider()
     col_left, col_right = st.columns([3, 1])
     with col_left:
@@ -980,6 +1019,7 @@ if st.session_state.step == 1:
                 st.session_state.product_name = product_name
                 st.session_state.job_roles    = combined_roles
                 st.session_state.custom_role  = custom_role
+                st.session_state.product_context = product_context
                 st.session_state.step = 2
                 st.rerun()
 
@@ -1164,6 +1204,84 @@ elif st.session_state.step == 3:
     )
     st.session_state.additional_notes = additional_notes
 
+    # ── Golden Standard Benchmark ─────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-card" style="margin-top:18px">
+      <div class="section-header">
+        <div class="section-icon">🏅</div>
+        <div>
+          <div class="section-title">Golden Standard Benchmark</div>
+          <div class="section-sub">Upload a management-approved sample design document as quality benchmark — AI will match its tone, depth, and structure</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_toggle, col_toggle_label = st.columns([0.08, 0.92])
+    with col_toggle:
+        use_benchmark = st.toggle(
+            "benchmark_toggle",
+            value=st.session_state.use_benchmark,
+            label_visibility="collapsed",
+            key="benchmark_toggle_widget",
+        )
+    with col_toggle_label:
+        if use_benchmark:
+            st.markdown(
+                "<span style='font-size:13px;font-weight:600;color:#005B8E'>"
+                "✅ Benchmark mode ON — upload your approved reference document below</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<span style='font-size:13px;color:#6B7280'>"
+                "Use built-in Oracle Design Master Class principles as quality standard</span>",
+                unsafe_allow_html=True,
+            )
+
+    st.session_state.use_benchmark = use_benchmark
+
+    if use_benchmark:
+        st.markdown(
+            "<div style='background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;"
+            "padding:12px 16px;margin:10px 0 6px 0;font-size:12px;color:#1E40AF'>"
+            "📌 <strong>How this works:</strong> The AI will study your uploaded benchmark document "
+            "and calibrate the generated output to match its level of detail, prose density, "
+            "table structure, and overall tone — while still applying your course-specific inputs."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        benchmark_file = st.file_uploader(
+            "Upload Benchmark Document",
+            type=["pdf", "docx", "pptx", "pptm"],
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+            key="benchmark_file_uploader",
+            help="Supported: PDF, DOCX, PPTX. This document will be used as a quality benchmark only — not as course source content.",
+        )
+        if benchmark_file:
+            bm_size_mb = round(benchmark_file.size / 1024 / 1024, 1)
+            st.success(
+                f"🏅 **Benchmark loaded:** {benchmark_file.name} "
+                f"— {benchmark_file.type.split('/')[-1].upper()} · {bm_size_mb} MB"
+            )
+            # Extract text from benchmark file and store in session state
+            bm_text = extract_master_content(benchmark_file, ocr_enabled=False)
+            st.session_state.benchmark_text     = bm_text
+            st.session_state.benchmark_filename = benchmark_file.name
+        elif not st.session_state.benchmark_text:
+            st.info("📂 No benchmark document uploaded yet. Upload a pre-approved design document above.")
+        else:
+            # Previously uploaded in this session — show retained state
+            st.success(
+                f"🏅 **Benchmark retained:** {st.session_state.benchmark_filename} "
+                f"(from earlier in this session)"
+            )
+    else:
+        # Clear benchmark state when toggled off
+        st.session_state.benchmark_text     = ""
+        st.session_state.benchmark_filename = ""
+
     st.divider()
     col_back, col_gen = st.columns(2)
     with col_back:
@@ -1267,6 +1385,9 @@ elif st.session_state.step == 4:
                 biz_outcomes=st.session_state.biz_outcomes,
                 all_knowledge=all_knowledge,
                 additional_notes=st.session_state.additional_notes,
+                product_context=st.session_state.product_context,
+                benchmark_text=st.session_state.get("benchmark_text", ""),
+                benchmark_filename=st.session_state.get("benchmark_filename", ""),
                 feedback=st.session_state.feedback_text,
             )
             response = client.chat.completions.create(
@@ -1432,6 +1553,13 @@ elif st.session_state.step == 4:
                         st.warning("Please enter feedback before refining.")
 
         # ── Document Preview ──────────────────────────────────────────────────
+        bm_badge = (
+            f"<span style='background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;"
+            f"font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;"
+            f"margin-left:4px'>🏅 Benchmark: {st.session_state.get('benchmark_filename','')}</span>"
+            if st.session_state.get("use_benchmark") and st.session_state.get("benchmark_filename")
+            else ""
+        )
         st.markdown(f"""
         <div class="doc-wrap">
           <div class="doc-body">
@@ -1441,6 +1569,7 @@ elif st.session_state.step == 4:
               <span>🏢 Oracle University</span>
               <span>🎯 {level}</span>
               <span>👤 {roles}</span>
+              {bm_badge}
             </div>
           </div>
         </div>
