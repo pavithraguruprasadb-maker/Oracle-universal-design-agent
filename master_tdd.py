@@ -80,7 +80,7 @@ MANDATORY_SECTIONS = [
     "END GOAL CHECKLIST",
     "ASSESSMENT TOPICS",
     "CASE STUDY",
-    "QA CHECKLIST",
+    "CHECKLIST",
 ]
 
 
@@ -448,7 +448,7 @@ Steps to Implement:
 Expected Outcome: Sub-15-minute synchronisation; zero unhandled faults; full audit trail in Activity Stream.
 [URL: https://docs.oracle.com/en/cloud/paas/application-integration/]
 
---- QA CHECKLIST
+--- CHECKLIST
 | # | Check | Pass/Fail |
 |---|-------|-----------|
 | 1 | Every job task maps to at least one skill and at least one module/topic | ✅ |
@@ -1433,7 +1433,7 @@ Review the following document and answer ONLY in a JSON object with this exact s
     "END GOAL CHECKLIST": true/false,
     "ASSESSMENT TOPICS": true/false,
     "CASE STUDY": true/false,
-    "QA CHECKLIST": true/false,
+    "CHECKLIST": true/false,
     "TRACEABILITY MAP": true/false
   }},
   "course_coverage_is_table": true/false,
@@ -1621,7 +1621,7 @@ REQUIRED OUTPUT STRUCTURE (use EXACTLY these headers, in this order)
   Sections: Goal | Scenario | Requirement | Steps to Implement | Expected Outcome.
   Ground the case study in a realistic persona use case from the PERSONA INFORMATION section.
 
---- QA CHECKLIST
+--- CHECKLIST
   Mandatory markdown table:
   | # | Check | Pass/Fail |
   Must include these checks at minimum:
@@ -2269,7 +2269,7 @@ elif st.session_state.step == 4:
             checks = [
                 ("course_coverage_is_table",               "Coverage Table rendered as markdown table"),
                 ("coverage_table_has_required_columns",    "Coverage Table has all required columns"),
-                ("qa_checklist_is_table",                  "QA Checklist rendered as markdown table"),
+                ("checklist_is_table",                  "Checklist rendered as markdown table"),
                 ("end_goal_uses_formula",                  "Course End Goal uses prescribed formula"),
                 ("gtm_has_linkedin_post",                  "GTM section includes LinkedIn Post"),
                 ("gtm_has_newsletter",                     "GTM section includes Newsletter Write-Up"),
