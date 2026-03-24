@@ -1,5 +1,5 @@
 """
-Oracle University — Training Design Agent  (Enhanced v2)
+Oracle University — Training Design Agent  (Enhanced v2) - 24-Mar
 Full-Stack: Multi-Step Streamlit Frontend + AI Backend (Groq / LLaMA-3.3-70B)
 
 Enhancements over v1:
@@ -47,8 +47,12 @@ from groq import Groq
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as RLTable, TableStyle
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer,
+    Table as RLTable, TableStyle, HRFlowable,
+)
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.units import cm as rl_cm
 from docx import Document as DocxDocument
 from docx.shared import Pt, RGBColor, Inches, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -68,10 +72,13 @@ st.set_page_config(
 # ─── MANDATORY SECTIONS ───────────────────────────────────────────────────────
 MANDATORY_SECTIONS = [
     "COURSE OVERVIEW",
+    "COURSE END GOAL",
     "PERSONA INFORMATION",
     "IMPLEMENTATION READINESS",
     "GTM MESSAGING",
     "COURSE COVERAGE TABLE",
+    "END GOAL CHECKLIST",
+    "ASSESSMENT TOPICS",
     "CASE STUDY",
     "QA CHECKLIST",
 ]
@@ -91,18 +98,69 @@ PRINCIPLE 1 — 80/20 CONTENT FOCUS
   Identify the 20 % of product capabilities that deliver 80 % of business value for the
   target role. Anchor every module to at least one of these high-value capabilities.
   Explicitly call out the rationale in the Course Overview.
+  Include a brief 80/20 Rationale block (1–2 bullets) stating exactly what was prioritised
+  and why — grounded in job-role frequency and business impact, not arbitrary selection.
 
-PRINCIPLE 2 — BLOOM'S TAXONOMY ALIGNMENT
-  Map every learning objective to a Bloom's level verb appropriate for the audience tier:
-    Beginner    → Remember / Understand  (define, describe, identify, explain)
-    Intermediate→ Apply / Analyse        (configure, implement, compare, troubleshoot)
-    Advanced    → Evaluate / Create      (design, optimise, justify, architect)
-  Objectives must be SMART (Specific, Measurable, Achievable, Relevant, Time-bound).
+PRINCIPLE 2 — LEARNING DESIGN PHILOSOPHY & BLOOM'S TAXONOMY ALIGNMENT
+
+  2a. DESIGN PHILOSOPHY — FOUR MENTAL FILTERS (apply to every content decision):
+    1. Start with the user     — always design from the learner's perspective.
+    2. Teach tasks, not tools  — focus on what the learner needs to DO, not what the product CAN do.
+    3. Simplify with purpose   — every element must answer "what's in it for me?" for the learner.
+    4. Show, don't just tell   — prioritise demonstration and application over passive delivery.
+
+  2b. COURSE END GOAL (North Star — referenced throughout every design decision):
+    State explicitly: what the learner will be able to DO after the course.
+    Use this formula:
+      "Be able to [ACTION + WHAT] in [CONTEXT] without [DEPENDENCY]"
+    Example: "Independently deploy, configure, and monitor the product in a production
+    environment without external support."
+    A vague end goal produces a vague course. Every module, topic, and activity must
+    trace back to this end goal.
+
+  2c. BLOOM'S TAXONOMY ALIGNMENT:
+    Map every learning objective to a Bloom's level verb appropriate for the audience tier:
+      Beginner    → Remember / Understand  (define, describe, identify, explain)
+      Intermediate→ Apply / Analyse        (configure, implement, compare, troubleshoot)
+      Advanced    → Evaluate / Create      (design, optimise, justify, architect)
+    Objectives must be SMART (Specific, Measurable, Achievable, Relevant, Time-bound).
+    Use measurable Bloom's action verbs (configure, deploy, troubleshoot, architect) —
+    never passive knowledge statements.
+
+  2d. LEARNING JOURNEY SUMMARY:
+    Include a 3–5 sentence narrative describing the complete learning arc from start to
+    finish — how the learner progresses from foundational awareness to confident
+    independent performance.
+
+  2e. MODULE BREAKDOWN REQUIREMENTS:
+    For every module and every lesson/topic within it, explicitly state:
+      • Connection to the Course End Goal
+      • Estimated duration
+      • What is taught (content summary)
+      • 3–5 action-oriented Key Takeaways using Bloom's verbs
+
+  2f. WHAT YOU CAN DO NOW (closing statement per module):
+    End each module description with a motivating 1–2 sentence statement confirming
+    what the learner can now independently accomplish.
+
+  2g. END GOAL CHECKLIST:
+    The document must include 5–8 "I can…" self-assessment statements directly tied
+    to the Course End Goal. These confirm readiness and close the learning loop.
+    Example: "I can configure a REST adapter connection in OIC without referencing
+    the user guide."
+
+  2h. ASSESSMENT TOPICS:
+    Provide 5–10 assessment topic areas with:
+      • Topic name
+      • Rationale (why this is assessed)
+      • Suggested assessment type (quiz / scenario / practical exercise)
+      • Difficulty level (Foundational / Intermediate / Advanced)
 
 PRINCIPLE 3 — MICROLEARNING ARCHITECTURE
   Every video or concept block: 3–7 minutes maximum.
   Every module: no more than 4 activities (Concept → Demo → Lab → Scenario).
-  Provide an estimated seat-time per module and a cumulative course total.
+  Provide an estimated seat-time per topic, per lab, per module, and a cumulative
+  course total.
 
 PRINCIPLE 4 — BALANCED ACTIVITY MIX
   Each module MUST include exactly:
@@ -110,11 +168,35 @@ PRINCIPLE 4 — BALANCED ACTIVITY MIX
     1 × Instructor/recorded Demo
     1 × Hands-on Lab (guided or open-ended, scaled to level)
     1 × Scenario or Case-study question
+  Activities may be combined where appropriate but all four types must be present.
 
-PRINCIPLE 5 — GTM MESSAGING FRAMEWORK
-  Produce a single crisp USP sentence (≤ 25 words).
-  List 3–5 business problems the course solves.
-  List 5–7 learner takeaways phrased as business outcomes.
+PRINCIPLE 5 — GTM MESSAGING FRAMEWORK (FULL — READY TO USE)
+  The GTM section MUST include ALL of the following elements:
+
+  5a. CORE GTM MESSAGE (5 elements, jargon-free, one-minute pitch):
+    1. What the product is         — brief plain-language description
+    2. What makes it stand out     — USP aligned with Product team positioning (≤ 25 words)
+    3. Who the course is for       — specific target roles / teams
+    4. What business problems it solves — 3–5 bullet points
+    5. What learners will take away — 5–7 outcomes phrased as business results
+
+  5b. LINKEDIN POST (150–250 words, course-specific, ready to publish):
+    Write a compelling LinkedIn post announcing this specific course. It must:
+      • Open with a hook relevant to the learner's pain point
+      • Name the course and product explicitly
+      • Call out 2–3 key outcomes learners will achieve
+      • Include a clear call-to-action (enrol, learn more, etc.)
+      • Use professional but conversational tone
+      • Be specific to this course content — NOT generic Oracle marketing copy
+
+  5c. NEWSLETTER WRITE-UP (200–300 words, course-specific, ready to use):
+    Write a newsletter announcement for this specific course. It must include:
+      • Headline
+      • Opening paragraph (what, why it matters now)
+      • Key learning outcomes (3–4 bullets)
+      • Who should enrol and why
+      • Call-to-action with urgency or relevance framing
+      • Be specific to this course — NOT a template with placeholder text
 
 PRINCIPLE 6 — PREREQUISITE CHAIN (FOUNDATIONAL → ADVANCED)
   Arrange modules so every module builds on the prior one.
@@ -123,13 +205,39 @@ PRINCIPLE 6 — PREREQUISITE CHAIN (FOUNDATIONAL → ADVANCED)
   State explicit prerequisites between modules inside the Coverage Table.
 
 PRINCIPLE 7 — AUDIENCE PERSONA FIDELITY
-  The Persona section must capture: Role title, day-to-day pain points, motivations,
-  tech-savviness, and the primary business metric they are measured on.
+  For each persona, provide a full profile:
+    • Name (representative, not generic)
+    • Role title
+    • Top 5 day-to-day responsibilities
+    • Top 3 pain points
+    • Learning preferences
+    • Tech-savviness level
+    • Primary business metric they are measured on
+  Ground every content decision in these persona profiles.
 
 PRINCIPLE 8 — TRACEABILITY & CITATIONS
-  Every factual claim must carry a [FILE: …] or [URL: …] tag.
-  If no source is available, tag with [ORACLE KNOWLEDGE BASE].
+  Every factual claim must carry a source tag. Use these formats:
+    [FILE: exact_filename.ext] — for uploaded documents
+    [URL: full_url_path]       — for scraped web pages (include the actual URL, not just the domain)
+    [ORACLE KNOWLEDGE BASE: topic_area] — only when no file or URL is available;
+      must include the specific topic area (e.g., [ORACLE KNOWLEDGE BASE: OIC Adapter Configuration])
+      so the reader knows what domain knowledge was used.
+  NEVER use a bare [ORACLE KNOWLEDGE BASE] tag without elaboration.
   The document must end with a TRACEABILITY MAP table.
+
+PRINCIPLE 9 — ROLE & SKILL ALIGNMENT
+  Map each job task to the specific skills it requires.
+  Every module must support measurable on-the-job performance for the target role.
+  No module may exist solely to explain product features — it must tie to a real job task.
+
+PRINCIPLE 10 — SKILL CHECKS & ASSESSMENT DESIGN
+  Design assessments (quizzes, practical exercises, scenario-based questions) that
+  directly measure the stated learning outcomes.
+  Every skill check question must:
+    1. Be tied to a specific module or learning outcome.
+    2. Present a realistic scenario or task — not a trivial recall question.
+    3. Include plausible distractors reflecting common learner misconceptions.
+    4. Have one clearly correct answer that directly reflects the content taught.
 
 === END DESIGN MASTER CLASS FRAMEWORK ===
 """
@@ -145,104 +253,216 @@ else:
 === REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE ===
 
 --- COURSE OVERVIEW
-Course Title : Oracle Integration Cloud Fundamentals
-Product      : Oracle Integration Cloud (OIC) 3.0
-Duration     : 12 hours (8 × 90-min modules)
-Delivery     : Instructor-led + self-paced eLearning
-Version      : Jan 2025 | Oracle University
+Course Title   : Oracle Integration Cloud Fundamentals
+Product Area   : Oracle Integration Cloud (OIC) 3.0
+Training Need  : Developers and Architects lack hands-on OIC skills, causing slow
+                 integration delivery and brittle custom-script workarounds.
+Target Audience: Integration Developers, IT Architects (Intermediate level)
+Duration       : 12 hours (8 modules × avg 90 min)
+Delivery       : Instructor-led + self-paced eLearning
 
-This course equips Developers and Integration Architects with the skills to design,
-build, and monitor enterprise integrations using Oracle Integration Cloud. Learners
-will exit the course able to configure REST and SOAP adapters, build orchestration
-flows, and instrument error handling and monitoring dashboards.
+Course Description:
+This course equips Integration Developers and Architects with the end-to-end skills
+to design, build, and monitor enterprise integrations using Oracle Integration Cloud.
+Learners exit able to configure REST and SOAP adapters, build orchestration flows,
+and instrument error handling and monitoring dashboards.
 
-80/20 Rationale: The two capabilities — REST adapter configuration and Orchestration
-flow design — account for ~80 % of production OIC usage. Modules 3–6 therefore
-receive the deepest treatment. [ORACLE KNOWLEDGE BASE]
+80/20 Rationale:
+  • REST adapter configuration and Orchestration flow design account for ~80% of
+    production OIC usage — these receive the deepest treatment (Modules 3–6).
+  • Monitoring and governance (20%) are covered efficiently in Modules 7–8 since
+    they leverage the same UI patterns already learned. [ORACLE KNOWLEDGE BASE: OIC Usage Analytics]
+
+Assumptions & Open Questions:
+  • Assumed learners have completed OCI Foundations badge.
+  • Open: Does the client require localisation (languages other than English)?
+
+--- COURSE END GOAL
+End Goal: Be able to independently design, deploy, and monitor multi-step enterprise
+integrations in Oracle Integration Cloud in a production tenancy without external support.
+
+Learning Journey Summary:
+Learners begin by grounding themselves in OIC architecture and core concepts (Module 1),
+then progressively configure connections, build their first integration, and apply
+orchestration patterns (Modules 2–4). The mid-section deepens skills in data mapping
+and error handling — the two most common sources of production failures (Modules 5–6).
+The journey closes with monitoring, observability, and governance (Modules 7–8), so
+learners can sustain and scale what they have built. By the end, learners can own an
+integration end-to-end from requirement to production deployment.
 
 --- PERSONA INFORMATION
-Primary Persona : Integration Developer
-  Pain Points   : Manual data movement between SaaS/on-prem systems, brittle custom
-                  scripts, lack of visibility into integration failures.
-  Motivation    : Reduce integration backlog; demonstrate architectural competence.
-  Tech Savviness: Comfortable with REST APIs and basic SQL; new to OIC.
+Primary Persona  : Priya — Integration Developer
+  Top 5 Responsibilities: Build and maintain SaaS-to-ERP integrations; troubleshoot
+    failed message flows; document integration architecture; coordinate with API teams;
+    govern naming conventions and versioning.
+  Top 3 Pain Points: Manual data movement between systems; brittle custom scripts that
+    break on schema changes; no centralised visibility into integration failures.
+  Learning Preferences: Hands-on labs, worked examples, searchable reference docs.
+  Tech-Savviness: Comfortable with REST APIs and basic SQL; new to OIC.
   Success Metric: # integrations delivered per sprint.
 
-Secondary Persona: IT Manager
-  Pain Points   : Governance gaps, unpredictable error storms, audit failures.
-  Motivation    : Centralise integration governance; reduce on-call incidents.
-  Tech Savviness: Non-coder; relies on dashboards and reports.
+Secondary Persona: Rohan — IT Manager
+  Top 5 Responsibilities: Oversee integration governance; manage on-call incidents;
+    report uptime to leadership; audit data flows for compliance; approve new connections.
+  Top 3 Pain Points: Governance gaps; unpredictable error storms; audit failures.
+  Learning Preferences: Dashboards, executive summaries, scenario walkthroughs.
+  Tech-Savviness: Non-coder; relies on dashboards and reports.
   Success Metric: System uptime; incident MTTR.
 
 --- IMPLEMENTATION READINESS
-Prerequisites:
-  • Oracle Cloud account with OIC provisioned (trial or production)
-  • Basic REST/SOAP API knowledge
-  • Completed "OCI Foundations" badge (recommended)
-
-Environment Requirements:
-  • OIC 3.0 instance (Gen 3 preferred)
-  • Sample REST endpoint (provided as lab utility)
-  • Access to Oracle Identity Cloud Service (IDCS)
+Prerequisites (Learner): Basic REST/SOAP API knowledge; completed "OCI Foundations" badge (recommended).
+Prerequisites (Access): Oracle Cloud account with OIC provisioned (trial or production);
+  access to Oracle Identity Cloud Service (IDCS); OIC 3.0 instance (Gen 3 preferred).
+Required Tools/Materials: Sample REST endpoint (provided as lab utility); lab exercise guides;
+  OIC_AdminGuide.pdf reference.
+Accessibility & Delivery: Captions required for all video topics; hosted on Oracle MyLearn LMS;
+  English only (localisation TBD — see Open Questions).
+Assessment Plan: Knowledge check quiz per module (≥80% pass); lab completion sign-off;
+  final scenario-based assessment covering Modules 4–6 (task completion criteria).
 
 --- GTM MESSAGING
-USP: Rapidly build enterprise-grade integrations on OIC without writing a single line
-of middleware code.
 
-Business Problems Solved:
-  1. Fragile custom-script integrations breaking on schema changes
-  2. No centralised visibility into integration health
-  3. Long time-to-market for new SaaS onboarding
-  4. Compliance gaps due to undocumented data flows
+5a. Core GTM Message:
+  Product: Oracle Integration Cloud (OIC) is Oracle's cloud-native integration platform
+    enabling enterprises to connect SaaS, on-premises, and custom applications without
+    writing middleware code.
+  USP: Build enterprise-grade integrations in hours, not weeks — no middleware expertise required.
+  Who it's for: Integration Developers and IT Architects managing Oracle Cloud environments.
+  Business Problems Solved:
+    1. Fragile custom-script integrations breaking on schema changes
+    2. No centralised visibility into integration health and failures
+    3. Long time-to-market for new SaaS application onboarding
+    4. Compliance gaps from undocumented and ungoverned data flows
+  Learner Takeaways:
+    1. Configure and test REST & SOAP adapter connections end-to-end
+    2. Design orchestration flows with branching, looping, and parallel actions
+    3. Implement global fault handlers and automated notification alerts
+    4. Monitor integration activity using built-in dashboards and activity streams
+    5. Apply OIC governance best practices for naming, versioning, and export/import
 
-Learner Takeaways:
-  1. Configure and test REST & SOAP adapters end-to-end
-  2. Design orchestration flows with branching and looping
-  3. Implement global fault handlers and notification alerts
-  4. Monitor integration activity using built-in dashboards
-  5. Apply OIC best practices for naming, versioning, and governance
+5b. LinkedIn Post:
+  🔌 Still losing hours to broken integrations and mystery failures at 2am?
+  Oracle Integration Cloud can change that — and now there's a course to prove it.
+
+  We're excited to announce Oracle Integration Cloud Fundamentals, a new hands-on
+  course from Oracle University designed for Integration Developers and IT Architects
+  who need to connect Oracle Cloud applications at enterprise scale.
+
+  In 12 hours across 8 practical modules, you'll go from OIC concepts to building,
+  deploying, and monitoring production-ready integrations — without writing a single
+  line of middleware code.
+
+  Here's what you'll be able to do when you're done:
+  ✅ Configure REST and SOAP adapter connections independently
+  ✅ Design orchestration flows with error handling and automated alerts
+  ✅ Monitor your integrations with live dashboards — and actually sleep at night
+
+  If you manage Oracle SaaS integrations and want to do it faster, cleaner, and with
+  full visibility — this course is for you.
+
+  👉 Enrol now on Oracle MyLearn. Link in comments.
+  #OracleUniversity #OracleCloud #Integration #OIC #CloudLearning
+
+5c. Newsletter Write-Up:
+  Headline: New Course Alert: Master Oracle Integration Cloud from Day One
+
+  Do your Oracle integrations feel more like a house of cards than a reliable pipeline?
+  Oracle University's new Oracle Integration Cloud Fundamentals course is built
+  specifically for Integration Developers and IT Architects who need to get production
+  integrations right — the first time.
+
+  Across 8 structured modules and 12 hours of learning, this course takes you from
+  foundational OIC concepts all the way to monitoring, governance, and best practices.
+  Every module is built around what you actually need to DO on the job — not just
+  what OIC can do on paper.
+
+  What you'll learn:
+  • Configure REST, SOAP, and database adapter connections with confidence
+  • Build orchestration flows including branching, looping, and parallel execution
+  • Design fault-tolerant integrations with error handlers and email alert notifications
+  • Use OIC monitoring dashboards to track integration health in real time
+
+  Who should enrol: Any developer or architect responsible for Oracle SaaS-to-ERP
+  integrations, or IT managers who want to understand what their teams are building
+  and how to govern it.
+
+  This course is available now on Oracle MyLearn. With hands-on labs grounded in
+  real scenarios, you'll leave with skills you can apply on Monday morning.
+  Don't wait for the next outage to motivate the learning.
 
 --- COURSE COVERAGE TABLE
-| Module # | Module Title | Topics | Bloom's Level | Activity Type | Duration | Source Ref |
-|----------|-------------|--------|---------------|---------------|----------|------------|
-| 1 | OIC Architecture & Concepts | Platform overview, tenancy, service limits | Remember | Concept + Quiz | 60 min | [URL: docs.oracle.com/oic] |
-| 2 | Connection Configuration | REST, SOAP, DB adapters; security policies | Understand | Demo + Lab | 90 min | [FILE: OIC_AdminGuide.pdf] |
-| 3 | Building Your First Integration | Trigger, action, map; activate & test | Apply | Lab (guided) | 90 min | [FILE: OIC_AdminGuide.pdf] |
-| 4 | Orchestration Flows | Switch, for-each, parallel actions | Apply/Analyse | Lab + Scenario | 90 min | [URL: docs.oracle.com/oic] |
-| 5 | Data Mapping & Transformation | XSLT mapper, JMESPATH, lookups | Analyse | Demo + Lab | 90 min | [ORACLE KNOWLEDGE BASE] |
-| 6 | Error Handling & Alerts | Fault handlers, retry policies, email alerts | Analyse | Lab + Case Study | 90 min | [FILE: OIC_AdminGuide.pdf] |
-| 7 | Monitoring & Observability | Activity stream, dashboards, tracking fields | Evaluate | Demo + Scenario | 60 min | [URL: docs.oracle.com/oic] |
-| 8 | Governance & Best Practices | Naming conventions, versioning, export/import | Evaluate/Create | Case Study + Peer Review | 60 min | [ORACLE KNOWLEDGE BASE] |
+| Module # | Module Title | Module Learning Objective | Topic # | Topic Title | What We Teach in This Topic/Lesson | Bloom's Level | Activity Type | Est. Video Duration (min) | Key Takeaways (3–5 action-oriented) | Matching Hands-On Lab | Lab Type | Lab Duration (min) | Source Ref |
+|----------|-------------|--------------------------|---------|-------------|-----------------------------------|---------------|---------------|--------------------------|-------------------------------------|----------------------|----------|-------------------|------------|
+| 1 | OIC Architecture & Concepts | Describe the OIC platform architecture and identify its core components and service limits | 1.1 | Platform Overview & Tenancy Setup | Covers OIC console navigation, tenancy concepts, instance types (Gen2 vs Gen3), and service limits. Learners understand what OIC is and how it fits into the Oracle Cloud stack. | Remember | Concept video | 5 | • Describe OIC's role in the Oracle Cloud ecosystem • Identify Gen2 vs Gen3 instance differences • Navigate the OIC console confidently • State the default service limits for your tenancy | N/A | N/A | — | [URL: https://docs.oracle.com/en/cloud/paas/application-integration/] |
+| 1 | OIC Architecture & Concepts | Describe the OIC platform architecture and identify its core components and service limits | 1.2 | Core Integration Concepts | Explains triggers, actions, adapters, connections, integrations, and the activation lifecycle. Learners build the vocabulary needed for all subsequent modules. | Understand | Concept video | 6 | • Define trigger vs action in OIC terminology • Explain the adapter-connection-integration hierarchy • Describe the integration activation and deactivation process • Identify key integration metadata fields | N/A | N/A | — | [FILE: OIC_AdminGuide.pdf] |
+| 2 | Connection Configuration | Configure REST, SOAP, and database adapter connections and apply appropriate security policies | 2.1 | Configuring REST Adapter Connections | Covers creating a REST connection: base URL, authentication (Basic, OAuth 2.0, API Key), connection testing, and troubleshooting common errors. | Apply | Demo + Lab | 7 | • Configure a REST connection with OAuth 2.0 authentication • Test a connection and interpret test results • Troubleshoot credential and endpoint errors • Apply naming conventions for connection governance | REST Connection Lab | Guided | 20 | [URL: https://docs.oracle.com/en/cloud/paas/application-integration/rest-adapter/] |
+
+Module Sequencing Rationale: Modules are ordered foundational (concepts/terminology) → procedural
+(connections/adapters) → application (build integrations) → advanced (orchestration, mapping, errors) →
+operational (monitoring, governance). Each module depends on vocabulary and skills from the prior one.
+A learner cannot configure a connection (Module 2) without understanding what a connection is (Module 1),
+and cannot build an orchestration flow (Module 4) without first building a basic integration (Module 3).
+
+TOTAL ESTIMATED SEAT TIME: 12 hours (720 minutes across 8 modules including labs).
+
+--- END GOAL CHECKLIST
+| # | I Can Statement | Bloom's Level | Maps to Module |
+|---|----------------|---------------|----------------|
+| 1 | I can configure a REST adapter connection and test it without referencing the user guide | Apply | 2 |
+| 2 | I can build a basic trigger-action integration, activate it, and run a test message | Apply | 3 |
+| 3 | I can design an orchestration flow with a switch condition and a for-each loop | Apply/Analyse | 4 |
+| 4 | I can map source to target fields using the OIC visual mapper and XSLT expressions | Analyse | 5 |
+| 5 | I can implement a global fault handler that sends an email alert on integration failure | Analyse | 6 |
+| 6 | I can use the Activity Stream dashboard to diagnose a failed integration instance | Evaluate | 7 |
+| 7 | I can apply OIC naming conventions and export/import an integration for environment promotion | Evaluate | 8 |
+
+--- ASSESSMENT TOPICS
+| # | Assessment Topic | Rationale | Suggested Type | Difficulty Level |
+|---|-----------------|-----------|----------------|-----------------|
+| 1 | OIC Core Terminology | Foundational vocabulary underpins all later tasks | Knowledge Check Quiz | Foundational |
+| 2 | Connection Configuration & Authentication | Most common source of integration setup failures | Scenario-Based Question | Intermediate |
+| 3 | Building a Basic Integration | Core competency — the minimum viable skill for the role | Practical Exercise | Intermediate |
+| 4 | Orchestration Flow Design | High-value capability used in ~60% of enterprise integrations | Scenario-Based Question | Intermediate |
+| 5 | Data Mapping with XSLT | Mapping errors are the #1 cause of data quality issues in integrations | Practical Exercise | Advanced |
+| 6 | Error Handling & Fault Tolerance | Directly impacts production reliability and SLA compliance | Scenario-Based Question | Advanced |
+| 7 | Monitoring & Incident Diagnosis | Required for on-call and governance responsibilities | Practical Exercise | Intermediate |
+| 8 | Governance & Environment Promotion | Ensures integrations are production-safe and auditable | Knowledge Check Quiz | Foundational |
 
 --- CASE STUDY
-Scenario: A regional bank needs to synchronise new customer records created in
-Salesforce CRM with Oracle ERP Cloud within 15 minutes of account creation.
+Goal: Automate real-time customer record synchronisation between Salesforce CRM and Oracle ERP Cloud.
 
-Challenge: The existing nightly batch job misses intra-day trades linked to new
-accounts, causing reconciliation failures.
+Scenario: A regional bank creates new customer accounts in Salesforce. The existing nightly batch job
+misses intra-day trades linked to new accounts, causing reconciliation failures and compliance risk.
 
-Solution Path (learner builds):
-  Step 1 — Create a Salesforce trigger connection authenticated via OAuth 2.0.
-  Step 2 — Create an Oracle ERP Cloud action connection.
-  Step 3 — Build an event-driven orchestration flow (trigger: new Account created).
+Requirement: Synchronise new Salesforce account records to Oracle ERP Cloud within 15 minutes of
+creation, with error notification to the integration ops team on any mapping failure.
+
+Steps to Implement:
+  Step 1 — Create a Salesforce trigger connection authenticated via OAuth 2.0. [FILE: OIC_AdminGuide.pdf]
+  Step 2 — Create an Oracle ERP Cloud action connection with appropriate roles. [FILE: OIC_AdminGuide.pdf]
+  Step 3 — Build an event-driven orchestration flow (trigger: new Salesforce Account created).
   Step 4 — Map Salesforce Account fields to ERP Customer schema using the visual mapper.
-  Step 5 — Add a fault handler that fires an email alert on mapping failure.
-  Step 6 — Activate, test with a sandbox record, and verify in Activity Stream.
+  Step 5 — Add a global fault handler that fires an email alert to ops-team@bank.com on failure.
+  Step 6 — Activate, test with a sandbox Salesforce record, and verify in the OIC Activity Stream.
 
-Expected Outcome: Sub-minute synchronisation; zero unhandled faults.
-[FILE: OIC_CaseStudy_Bank.pdf]
+Expected Outcome: Sub-15-minute synchronisation; zero unhandled faults; full audit trail in Activity Stream.
+[URL: https://docs.oracle.com/en/cloud/paas/application-integration/]
 
 --- QA CHECKLIST
 | # | Check | Pass/Fail |
 |---|-------|-----------|
-| 1 | All objectives use SMART Bloom's verbs | ✅ |
-| 2 | Each module has Concept + Demo + Lab + Scenario | ✅ |
-| 3 | Bloom's level matches audience (Intermediate) | ✅ |
-| 4 | Prerequisites stated and honoured in Module 1 | ✅ |
-| 5 | Lab-to-concept ratio ≥ 1:1 | ✅ |
-| 6 | Every factual claim carries a source citation | ✅ |
-| 7 | Total seat time estimated (12 hr) | ✅ |
-| 8 | Modules arranged foundational → advanced | ✅ |
+| 1 | Every job task maps to at least one skill and at least one module/topic | ✅ |
+| 2 | 80/20 prioritisation rationale included and grounded in business impact | ✅ |
+| 3 | Bloom's level assigned for every topic; objectives use measurable action verbs | ✅ |
+| 4 | Balanced mix per module (Concept + Demo + Lab + Scenario) | ✅ |
+| 5 | No out-of-scope content; gaps captured under Assumptions & Open Questions | ✅ |
+| 6 | Course End Goal stated using prescribed formula | ✅ |
+| 7 | Learning Journey Summary (3–5 sentences) present | ✅ |
+| 8 | End Goal Checklist with 7 "I can…" statements present | ✅ |
+| 9 | Assessment Topics table with 8 rows present | ✅ |
+| 10 | GTM section includes LinkedIn Post AND Newsletter Write-Up | ✅ |
+| 11 | All Source Refs are specific — no bare [ORACLE KNOWLEDGE BASE] tags | ✅ |
+| 12 | Total seat time estimated (12 hr / 720 min) | ✅ |
 
 === END REFERENCE SAMPLE ===
 """
@@ -550,9 +770,23 @@ def parse_markdown_tables(text: str):
     return segments
 
 
-# ── 6. Word Builder — Enhanced (Enhancement 8) ───────────────────────────────
+# ── 6. Word Builder — Professional Design ────────────────────────────────────
+
+# Colour palette
+_C_NAVY      = "1A1A2E"   # section header bar background
+_C_RED       = "C74634"   # Oracle red accent
+_C_BLUE      = "005B8E"   # sub-heading blue
+_C_SILVER    = "F0F4F8"   # alternate row / info band
+_C_BORDER    = "DDE1E7"   # subtle border
+_C_WHITE     = "FFFFFF"
+_C_DARK_TEXT = "1D1D1F"
+
+
+def _rgb(hex6: str) -> RGBColor:
+    return RGBColor(int(hex6[0:2], 16), int(hex6[2:4], 16), int(hex6[4:6], 16))
+
+
 def _set_cell_bg(cell, hex_color: str):
-    """Set table cell background colour."""
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
@@ -562,88 +796,332 @@ def _set_cell_bg(cell, hex_color: str):
     tcPr.append(shd)
 
 
+def _set_cell_border(cell, hex_color: str = _C_BORDER):
+    """Add light borders to a cell."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        border = OxmlElement(f"w:{side}")
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), "4")
+        border.set(qn("w:space"), "0")
+        border.set(qn("w:color"), hex_color)
+        tcBorders.append(border)
+    tcPr.append(tcBorders)
+
+
+def _set_cell_padding(cell, top=60, bottom=60, left=100, right=100):
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcMar = OxmlElement("w:tcMar")
+    for side, val in (("top", top), ("bottom", bottom), ("left", left), ("right", right)):
+        m = OxmlElement(f"w:{side}")
+        m.set(qn("w:w"), str(val))
+        m.set(qn("w:type"), "dxa")
+        tcMar.append(m)
+    tcPr.append(tcMar)
+
+
+def _add_cover_page(doc: DocxDocument, title: str, gen_date: str, product: str, roles: str, level: str):
+    """Insert a styled cover section before body content."""
+    # Top accent bar — a 1-row, 1-col table used as a coloured band
+    bar = doc.add_table(rows=1, cols=1)
+    bar.style = "Table Grid"
+    bar_cell = bar.rows[0].cells[0]
+    _set_cell_bg(bar_cell, _C_NAVY)
+    bar_cell.paragraphs[0].clear()
+    run = bar_cell.paragraphs[0].add_run("  ORACLE UNIVERSITY")
+    run.font.bold = True
+    run.font.size = Pt(11)
+    run.font.color.rgb = _rgb(_C_WHITE)
+    run.font.name = "Calibri"
+    bar_cell.paragraphs[0].paragraph_format.space_before = Pt(6)
+    bar_cell.paragraphs[0].paragraph_format.space_after = Pt(6)
+
+    doc.add_paragraph("")
+
+    # Document type label
+    lbl = doc.add_paragraph()
+    lbl_run = lbl.add_run("TRAINING DESIGN DOCUMENT")
+    lbl_run.font.size = Pt(9)
+    lbl_run.font.bold = True
+    lbl_run.font.color.rgb = _rgb(_C_RED)
+    lbl_run.font.name = "Calibri"
+    lbl.paragraph_format.space_after = Pt(4)
+
+    # Main title
+    t = doc.add_paragraph()
+    t_run = t.add_run(title)
+    t_run.font.size = Pt(24)
+    t_run.font.bold = True
+    t_run.font.color.rgb = _rgb(_C_NAVY)
+    t_run.font.name = "Calibri"
+    t.paragraph_format.space_after = Pt(16)
+
+    # Metadata band
+    meta = doc.add_table(rows=1, cols=4)
+    meta.style = "Table Grid"
+    meta_labels = [("📅 Date", gen_date), ("📦 Product", product),
+                   ("🎯 Level", level), ("👤 Roles", roles[:40] + "…" if len(roles) > 40 else roles)]
+    for ci, (lbl_txt, val_txt) in enumerate(meta_labels):
+        cell = meta.rows[0].cells[ci]
+        _set_cell_bg(cell, _C_SILVER)
+        _set_cell_border(cell, _C_BORDER)
+        _set_cell_padding(cell, 80, 80, 120, 120)
+        p = cell.paragraphs[0]
+        p.clear()
+        label_r = p.add_run(lbl_txt + "\n")
+        label_r.font.size = Pt(8)
+        label_r.font.bold = True
+        label_r.font.color.rgb = _rgb(_C_BLUE)
+        label_r.font.name = "Calibri"
+        val_r = p.add_run(val_txt)
+        val_r.font.size = Pt(9)
+        val_r.font.bold = False
+        val_r.font.color.rgb = _rgb(_C_DARK_TEXT)
+        val_r.font.name = "Calibri"
+
+    doc.add_paragraph("")
+    # Divider rule
+    div = doc.add_paragraph()
+    div_run = div.add_run("─" * 90)
+    div_run.font.color.rgb = _rgb(_C_RED)
+    div_run.font.size = Pt(8)
+    div.paragraph_format.space_after = Pt(14)
+
+
+def _add_section_header(doc: DocxDocument, title: str):
+    """Full-width coloured section header bar."""
+    tbl = doc.add_table(rows=1, cols=1)
+    tbl.style = "Table Grid"
+    cell = tbl.rows[0].cells[0]
+    _set_cell_bg(cell, _C_NAVY)
+    _set_cell_padding(cell, 80, 80, 160, 160)
+    p = cell.paragraphs[0]
+    p.clear()
+    run = p.add_run(title)
+    run.font.bold = True
+    run.font.size = Pt(11)
+    run.font.color.rgb = _rgb(_C_WHITE)
+    run.font.name = "Calibri"
+    sp = doc.add_paragraph("")
+    sp.paragraph_format.space_before = Pt(0)
+    sp.paragraph_format.space_after = Pt(4)
+
+
+def _add_sub_heading(doc: DocxDocument, title: str):
+    """Red left-border sub-heading."""
+    p = doc.add_paragraph()
+    run = p.add_run(title)
+    run.font.bold = True
+    run.font.size = Pt(10.5)
+    run.font.color.rgb = _rgb(_C_RED)
+    run.font.name = "Calibri"
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after = Pt(3)
+    # Left shading bar via a 1x1 table trick
+    return p
+
+
+def _style_table(doc: DocxDocument, headers: list, rows: list):
+    """Render a polished table with header bar, alternating rows, borders, padding."""
+    if not headers or not rows:
+        return
+
+    col_count = len(headers)
+    table = doc.add_table(rows=1 + len(rows), cols=col_count)
+    table.style = "Table Grid"
+
+    # Set table to auto-fit
+    tbl_elem = table._tbl
+    tblPr = tbl_elem.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl_elem.insert(0, tblPr)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), "0")
+    tblW.set(qn("w:type"), "auto")
+    tblPr.append(tblW)
+
+    # Header row — navy background, white bold text
+    hdr_cells = table.rows[0].cells
+    for ci, htext in enumerate(headers):
+        cell = hdr_cells[ci]
+        _set_cell_bg(cell, _C_NAVY)
+        _set_cell_border(cell, "2E3A6E")
+        _set_cell_padding(cell, 80, 80, 120, 120)
+        p = cell.paragraphs[0]
+        p.clear()
+        run = p.add_run(htext)
+        run.bold = True
+        run.font.size = Pt(9)
+        run.font.color.rgb = _rgb(_C_WHITE)
+        run.font.name = "Calibri"
+
+    # Data rows — alternating white / light silver
+    for ri, row_data in enumerate(rows):
+        row_cells = table.rows[ri + 1].cells
+        bg = _C_WHITE if ri % 2 == 0 else _C_SILVER
+        for ci in range(col_count):
+            cell = row_cells[ci]
+            cell_text = row_data[ci] if ci < len(row_data) else ""
+            _set_cell_bg(cell, bg)
+            _set_cell_border(cell, _C_BORDER)
+            _set_cell_padding(cell, 70, 70, 110, 110)
+            p = cell.paragraphs[0]
+            p.clear()
+            run = p.add_run(cell_text)
+            run.font.size = Pt(9)
+            run.font.name = "Calibri"
+            run.font.color.rgb = _rgb(_C_DARK_TEXT)
+
+    doc.add_paragraph("").paragraph_format.space_after = Pt(8)
+
+
 def build_word(content: str, title: str) -> io.BytesIO:
     doc = DocxDocument()
 
-    # ── Named styles ─────────────────────────────────────────────────────────
-    styles = doc.styles
+    # ── Page margins ──────────────────────────────────────────────────────────
+    for section in doc.sections:
+        section.top_margin    = Cm(1.8)
+        section.bottom_margin = Cm(1.8)
+        section.left_margin   = Cm(2.2)
+        section.right_margin  = Cm(2.2)
 
-    # Ensure Heading 1-3 exist (they always do in a blank docx, but we tweak them)
-    for lvl, sz, rgb in [(1, 16, (26, 26, 46)), (2, 13, (199, 70, 52)), (3, 11, (0, 91, 142))]:
-        h = styles[f"Heading {lvl}"]
+    # ── Global body style ─────────────────────────────────────────────────────
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(10)
+    normal.font.color.rgb = _rgb(_C_DARK_TEXT)
+
+    # Tune built-in heading styles (kept for fallback)
+    for lvl, sz, col in [(1, 13, _C_NAVY), (2, 11, _C_RED), (3, 10, _C_BLUE)]:
+        h = doc.styles[f"Heading {lvl}"]
+        h.font.name = "Calibri"
         h.font.size = Pt(sz)
         h.font.bold = True
-        h.font.color.rgb = RGBColor(*rgb)
+        h.font.color.rgb = _rgb(col)
+        h.paragraph_format.space_before = Pt(10)
+        h.paragraph_format.space_after  = Pt(4)
 
-    body_style = styles["Normal"]
-    body_style.font.name = "Calibri"
-    body_style.font.size = Pt(10.5)
+    # ── Cover / header area ───────────────────────────────────────────────────
+    gen_date = datetime.now().strftime("%B %d, %Y")
+    _add_cover_page(doc, title, gen_date,
+                    product="Oracle University",
+                    roles="See Persona Section",
+                    level="See Course Overview")
 
-    # ── Title ─────────────────────────────────────────────────────────────────
-    title_para = doc.add_heading(f"Training Design Document: {title}", level=0)
-    title_para.runs[0].font.color.rgb = RGBColor(26, 26, 46)
-
-    # ── Parse content into text/table segments ────────────────────────────────
+    # ── Parse and render content ──────────────────────────────────────────────
     segments = parse_markdown_tables(content)
 
     for seg in segments:
         if seg[0] == "table":
             _, headers, rows = seg
+            _style_table(doc, headers, rows)
 
-            # Skip degenerate tables
-            if not headers or not rows:
-                continue
-
-            col_count = len(headers)
-            table = doc.add_table(rows=1 + len(rows), cols=col_count)
-            table.style = "Table Grid"
-
-            # Header row
-            hdr_cells = table.rows[0].cells
-            for ci, htext in enumerate(headers):
-                hdr_cells[ci].text = htext
-                hdr_cells[ci].paragraphs[0].runs[0].bold = True
-                hdr_cells[ci].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 255, 255)
-                _set_cell_bg(hdr_cells[ci], "1A1A2E")
-
-            # Data rows
-            for ri, row_data in enumerate(rows):
-                row_cells = table.rows[ri + 1].cells
-                for ci in range(col_count):
-                    cell_text = row_data[ci] if ci < len(row_data) else ""
-                    row_cells[ci].text = cell_text
-                    if ri % 2 == 0:
-                        _set_cell_bg(row_cells[ci], "F7F8FA")
-
-            doc.add_paragraph("")  # spacing after table
-
-        else:  # text segment
+        else:
             for line in seg[1].splitlines():
                 line = line.strip()
                 if not line:
                     continue
 
-                # Detect section headers like  --- COURSE OVERVIEW
-                sec_match = re.match(r"---?\s*([A-Z][A-Z\s/]+)$", line)
+                # ── Section header: --- COURSE OVERVIEW
+                sec_match = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
                 if sec_match:
-                    doc.add_heading(sec_match.group(1).strip(), level=1)
+                    _add_section_header(doc, sec_match.group(1).strip())
+                    continue
 
-                # Detect sub-headings (lines ending with : or all-caps short line)
-                elif line.endswith(":") and len(line) < 60 and line == line.title() + ":":
-                    doc.add_heading(line, level=2)
+                # ── Bold key-value line: "Key : Value"
+                kv_match = re.match(r"^([A-Z][A-Za-z\s/\-]{1,40})\s*:\s*(.+)$", line)
+                if kv_match:
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
+                    key_run = p.add_run(kv_match.group(1) + ": ")
+                    key_run.bold = True
+                    key_run.font.size = Pt(10)
+                    key_run.font.name = "Calibri"
+                    key_run.font.color.rgb = _rgb(_C_NAVY)
+                    val_run = p.add_run(kv_match.group(2))
+                    val_run.font.size = Pt(10)
+                    val_run.font.name = "Calibri"
+                    val_run.font.color.rgb = _rgb(_C_DARK_TEXT)
+                    continue
 
-                # Bullet detection
-                elif line.startswith(("- ", "• ", "* ")):
-                    p = doc.add_paragraph(line[2:], style="List Bullet")
-                    p.paragraph_format.left_indent = Inches(0.25)
+                # ── Sub-heading: line ending with ":" that's title-cased or ALL CAPS short
+                if (line.endswith(":") and len(line) < 70
+                        and (line == line.title() + ":" or line == line.upper())):
+                    _add_sub_heading(doc, line)
+                    continue
 
-                # Numbered list
-                elif re.match(r"^\d+[\.\)]\s", line):
-                    p = doc.add_paragraph(re.sub(r"^\d+[\.\)]\s", "", line), style="List Number")
-                    p.paragraph_format.left_indent = Inches(0.25)
+                # ── Bold label lines like "5a. CORE GTM MESSAGE"
+                if re.match(r"^\d+[a-z]?\.\s+[A-Z]", line) or re.match(r"^[A-Z]{2,}[\s:–]", line):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_before = Pt(6)
+                    p.paragraph_format.space_after  = Pt(2)
+                    run = p.add_run(line)
+                    run.bold = True
+                    run.font.size = Pt(10)
+                    run.font.name = "Calibri"
+                    run.font.color.rgb = _rgb(_C_BLUE)
+                    continue
 
-                else:
-                    doc.add_paragraph(line)
+                # ── Bullet point
+                if line.startswith(("- ", "• ", "* ", "· ")):
+                    p = doc.add_paragraph(style="List Bullet")
+                    p.paragraph_format.left_indent  = Inches(0.3)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
+                    run = p.add_run(line[2:])
+                    run.font.size = Pt(10)
+                    run.font.name = "Calibri"
+                    continue
+
+                # ── Numbered list
+                if re.match(r"^\d+[\.\)]\s", line):
+                    p = doc.add_paragraph(style="List Number")
+                    p.paragraph_format.left_indent  = Inches(0.3)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after  = Pt(1)
+                    run = p.add_run(re.sub(r"^\d+[\.\)]\s", "", line))
+                    run.font.size = Pt(10)
+                    run.font.name = "Calibri"
+                    continue
+
+                # ── Citation / source tag line — style distinctly
+                if re.match(r"^\[(FILE|URL|ORACLE)", line):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.left_indent  = Inches(0.2)
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after  = Pt(2)
+                    run = p.add_run(line)
+                    run.font.size = Pt(8.5)
+                    run.font.italic = True
+                    run.font.name = "Calibri"
+                    run.font.color.rgb = _rgb("6B7280")
+                    continue
+
+                # ── Default body text
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(1)
+                p.paragraph_format.space_after  = Pt(3)
+                run = p.add_run(line)
+                run.font.size = Pt(10)
+                run.font.name = "Calibri"
+                run.font.color.rgb = _rgb(_C_DARK_TEXT)
+
+    # ── Footer line ───────────────────────────────────────────────────────────
+    doc.add_paragraph("")
+    footer_p = doc.add_paragraph()
+    footer_run = footer_p.add_run(
+        f"Oracle University · Training Design Document · Generated {gen_date}"
+    )
+    footer_run.font.size = Pt(8)
+    footer_run.font.italic = True
+    footer_run.font.color.rgb = _rgb("9CA3AF")
+    footer_run.font.name = "Calibri"
+    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -651,32 +1129,173 @@ def build_word(content: str, title: str) -> io.BytesIO:
     return buf
 
 
-# ── 7. PDF Builder ────────────────────────────────────────────────────────────
+# ── 7. PDF Builder — Professional Design ─────────────────────────────────────
 def build_pdf(content: str, title: str) -> io.BytesIO:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer,
+        Table as RLTable, TableStyle, HRFlowable, PageBreak,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+
+    # ── Palette ───────────────────────────────────────────────────────────────
+    C_NAVY   = colors.HexColor("#1A1A2E")
+    C_RED    = colors.HexColor("#C74634")
+    C_BLUE   = colors.HexColor("#005B8E")
+    C_SILVER = colors.HexColor("#F0F4F8")
+    C_BORDER = colors.HexColor("#DDE1E7")
+    C_MIST   = colors.HexColor("#F7F9FB")
+    C_GREY   = colors.HexColor("#6B7280")
+    C_TEXT   = colors.HexColor("#1D1D1F")
+    C_WHITE  = colors.white
+
     buf = io.BytesIO()
+    gen_date = datetime.now().strftime("%B %d, %Y")
+
+    # ── Page template with header/footer ──────────────────────────────────────
+    def _on_page(canvas, doc):
+        canvas.saveState()
+        w, h = A4
+        # Top bar
+        canvas.setFillColor(C_NAVY)
+        canvas.rect(0, h - 28, w, 28, fill=1, stroke=0)
+        canvas.setFillColor(C_WHITE)
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawString(1.5 * cm, h - 18, "ORACLE UNIVERSITY")
+        canvas.setFont("Helvetica", 7.5)
+        canvas.drawRightString(w - 1.5 * cm, h - 18, f"Training Design Document · {title[:55]}")
+        # Red accent strip under header
+        canvas.setFillColor(C_RED)
+        canvas.rect(0, h - 31, w, 3, fill=1, stroke=0)
+        # Footer
+        canvas.setFillColor(C_BORDER)
+        canvas.rect(0, 0, w, 22, fill=1, stroke=0)
+        canvas.setFillColor(C_GREY)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(1.5 * cm, 7, f"Generated {gen_date}  ·  Oracle University  ·  Confidential")
+        canvas.drawRightString(w - 1.5 * cm, 7, f"Page {doc.page}")
+        canvas.restoreState()
+
     doc_pdf = SimpleDocTemplate(
-        buf, pagesize=landscape(A4),
-        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30,
+        buf,
+        pagesize=A4,
+        rightMargin=1.8 * cm,
+        leftMargin=1.8 * cm,
+        topMargin=1.6 * cm,
+        bottomMargin=1.6 * cm,
     )
-    styles = getSampleStyleSheet()
-    header_style = ParagraphStyle(
-        "HeaderStyle", parent=styles["Heading1"],
-        fontSize=13, textColor=colors.white,
-        backColor=colors.HexColor("#1A1A2E"),
-        alignment=TA_LEFT, spaceAfter=10, borderPadding=6,
-    )
-    body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontSize=10, leading=14)
-    table_header_style = ParagraphStyle(
-        "TblHdr", parent=styles["Normal"],
-        fontSize=9, textColor=colors.white, fontName="Helvetica-Bold",
-    )
-    table_cell_style = ParagraphStyle("TblCell", parent=styles["Normal"], fontSize=9, leading=12)
 
-    elements = [
-        Paragraph(f"TRAINING DESIGN DOCUMENT: {title}", styles["Title"]),
-        Spacer(1, 20),
-    ]
+    # ── Style definitions ─────────────────────────────────────────────────────
+    base = getSampleStyleSheet()
 
+    sty_title = ParagraphStyle(
+        "DocTitle", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=22,
+        textColor=C_NAVY, leading=28,
+        spaceAfter=6,
+    )
+    sty_subtitle = ParagraphStyle(
+        "DocSubtitle", parent=base["Normal"],
+        fontName="Helvetica", fontSize=11,
+        textColor=C_RED, leading=16,
+        spaceAfter=16,
+    )
+    sty_sec_hdr = ParagraphStyle(
+        "SecHdr", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=10,
+        textColor=C_WHITE, leading=14,
+        backColor=C_NAVY,
+        leftIndent=8, rightIndent=8,
+        spaceBefore=14, spaceAfter=6,
+        borderPadding=(5, 8, 5, 8),
+    )
+    sty_sub_hdr = ParagraphStyle(
+        "SubHdr", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=10,
+        textColor=C_RED, leading=14,
+        spaceBefore=10, spaceAfter=3,
+    )
+    sty_label_hdr = ParagraphStyle(
+        "LabelHdr", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=9.5,
+        textColor=C_BLUE, leading=13,
+        spaceBefore=6, spaceAfter=2,
+    )
+    sty_body = ParagraphStyle(
+        "Body", parent=base["Normal"],
+        fontName="Helvetica", fontSize=9.5,
+        textColor=C_TEXT, leading=14,
+        spaceBefore=2, spaceAfter=3,
+    )
+    sty_kv_key = ParagraphStyle(
+        "KVKey", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=9.5,
+        textColor=C_NAVY, leading=13,
+        spaceBefore=1, spaceAfter=1,
+    )
+    sty_bullet = ParagraphStyle(
+        "Bullet", parent=base["Normal"],
+        fontName="Helvetica", fontSize=9.5,
+        textColor=C_TEXT, leading=13,
+        leftIndent=14, firstLineIndent=-10,
+        spaceBefore=1, spaceAfter=1,
+    )
+    sty_num = ParagraphStyle(
+        "Num", parent=base["Normal"],
+        fontName="Helvetica", fontSize=9.5,
+        textColor=C_TEXT, leading=13,
+        leftIndent=16, firstLineIndent=-12,
+        spaceBefore=1, spaceAfter=1,
+    )
+    sty_cite = ParagraphStyle(
+        "Cite", parent=base["Normal"],
+        fontName="Helvetica-Oblique", fontSize=8,
+        textColor=C_GREY, leading=11,
+        leftIndent=10, spaceBefore=0, spaceAfter=2,
+    )
+    sty_tbl_hdr = ParagraphStyle(
+        "TblHdr", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=8,
+        textColor=C_WHITE, leading=11,
+    )
+    sty_tbl_cell = ParagraphStyle(
+        "TblCell", parent=base["Normal"],
+        fontName="Helvetica", fontSize=8,
+        textColor=C_TEXT, leading=11,
+    )
+
+    # ── Cover elements ────────────────────────────────────────────────────────
+    elements = []
+
+    # Push title content below the nav bar
+    elements.append(Spacer(1, 0.6 * cm))
+    elements.append(Paragraph("TRAINING DESIGN DOCUMENT", sty_subtitle))
+    elements.append(Paragraph(title, sty_title))
+    elements.append(HRFlowable(width="100%", thickness=2, color=C_RED, spaceAfter=10))
+
+    # Meta info table on cover
+    meta_data = [[
+        Paragraph("<b>Date</b><br/>" + gen_date, sty_body),
+        Paragraph("<b>Issuer</b><br/>Oracle University", sty_body),
+        Paragraph("<b>Classification</b><br/>Confidential — Internal", sty_body),
+    ]]
+    meta_tbl = RLTable(meta_data, colWidths=["33%", "33%", "34%"])
+    meta_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_SILVER),
+        ("GRID",          (0, 0), (-1, -1), 0.5, C_BORDER),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    elements.append(meta_tbl)
+    elements.append(Spacer(1, 0.5 * cm))
+
+    # ── Content rendering ─────────────────────────────────────────────────────
     segments = parse_markdown_tables(content)
 
     for seg in segments:
@@ -685,45 +1304,109 @@ def build_pdf(content: str, title: str) -> io.BytesIO:
             if not headers or not rows:
                 continue
 
-            tbl_data = [[Paragraph(h, table_header_style) for h in headers]]
+            col_count = len(headers)
+            page_w = A4[0] - 3.6 * cm  # total usable width
+
+            # Smart column width distribution
+            if col_count <= 4:
+                col_w = [page_w / col_count] * col_count
+            else:
+                # Give equal width; very wide tables scroll gracefully
+                col_w = [page_w / col_count] * col_count
+
+            tbl_data = [[Paragraph(h, sty_tbl_hdr) for h in headers]]
             for row in rows:
                 tbl_data.append([
-                    Paragraph(row[ci] if ci < len(row) else "", table_cell_style)
-                    for ci in range(len(headers))
+                    Paragraph(row[ci] if ci < len(row) else "", sty_tbl_cell)
+                    for ci in range(col_count)
                 ])
 
-            col_width = (landscape(A4)[0] - 60) / len(headers)
-            rl_table = RLTable(tbl_data, colWidths=[col_width] * len(headers))
-            rl_table.setStyle(TableStyle([
-                ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#1A1A2E")),
-                ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
-                ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE",    (0, 0), (-1, -1), 9),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F8FA")]),
-                ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#DDE1E7")),
-                ("VALIGN",      (0, 0), (-1, -1), "TOP"),
-                ("TOPPADDING",  (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            rl_tbl = RLTable(tbl_data, colWidths=col_w, repeatRows=1)
+            rl_tbl.setStyle(TableStyle([
+                # Header
+                ("BACKGROUND",    (0, 0), (-1, 0), C_NAVY),
+                ("TEXTCOLOR",     (0, 0), (-1, 0), C_WHITE),
+                ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, 0), 8),
+                ("TOPPADDING",    (0, 0), (-1, 0), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                # Data rows alternating
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_MIST]),
+                ("FONTSIZE",      (0, 1), (-1, -1), 8),
+                ("TOPPADDING",    (0, 1), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+                # Grid
+                ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+                ("LINEBELOW",     (0, 0), (-1, 0), 1.5, C_RED),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                # Rounded feel via inner lines
+                ("LINEABOVE",     (0, 0), (-1, 0), 0, C_WHITE),
             ]))
-            elements.append(rl_table)
+            elements.append(rl_tbl)
             elements.append(Spacer(1, 10))
 
         else:
             for line in seg[1].splitlines():
                 line = line.strip()
                 if not line:
+                    elements.append(Spacer(1, 3))
                     continue
-                if any(sec in line.upper() for sec in MANDATORY_SECTIONS) and "---" in line:
-                    elements.append(Spacer(1, 10))
-                    elements.append(Paragraph(line.replace("-", "").strip(), header_style))
-                else:
-                    try:
-                        elements.append(Paragraph(line, body_style))
-                    except Exception:
-                        clean = re.sub(r"[^\x20-\x7E]", " ", line)
-                        elements.append(Paragraph(clean, body_style))
 
-    doc_pdf.build(elements)
+                # Section header bar
+                sec_match = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
+                if sec_match:
+                    elements.append(Spacer(1, 6))
+                    elements.append(Paragraph(sec_match.group(1).strip(), sty_sec_hdr))
+                    elements.append(HRFlowable(width="100%", thickness=1,
+                                               color=C_RED, spaceAfter=4))
+                    continue
+
+                # Key-value line
+                kv_match = re.match(r"^([A-Z][A-Za-z\s/\-]{1,40})\s*:\s*(.+)$", line)
+                if kv_match:
+                    txt = f"<b><font color='#1A1A2E'>{kv_match.group(1)}:</font></b>  {kv_match.group(2)}"
+                    elements.append(Paragraph(txt, sty_body))
+                    continue
+
+                # Sub-heading
+                if (line.endswith(":") and len(line) < 70
+                        and (line == line.title() + ":" or line == line.upper())):
+                    elements.append(Paragraph(line, sty_sub_hdr))
+                    continue
+
+                # Numbered label heading (e.g. "5a. CORE GTM…")
+                if re.match(r"^\d+[a-z]?\.\s+[A-Z]", line) or re.match(r"^[A-Z]{2,}[\s:–—]", line):
+                    elements.append(Paragraph(line, sty_label_hdr))
+                    continue
+
+                # Bullet
+                if line.startswith(("- ", "• ", "* ", "· ")):
+                    elements.append(Paragraph("• " + line[2:], sty_bullet))
+                    continue
+
+                # Numbered list
+                if re.match(r"^\d+[\.\)]\s", line):
+                    num_match = re.match(r"^(\d+[\.\)])\s(.+)$", line)
+                    if num_match:
+                        elements.append(Paragraph(
+                            f"{num_match.group(1)} {num_match.group(2)}", sty_num))
+                    continue
+
+                # Citation
+                if re.match(r"^\[(FILE|URL|ORACLE)", line):
+                    elements.append(Paragraph(line, sty_cite))
+                    continue
+
+                # Default body
+                try:
+                    elements.append(Paragraph(line, sty_body))
+                except Exception:
+                    clean = re.sub(r"[^\x20-\x7E]", " ", line)
+                    elements.append(Paragraph(clean, sty_body))
+
+    doc_pdf.build(elements, onFirstPage=_on_page, onLaterPages=_on_page)
     buf.seek(0)
     return buf
 
@@ -740,14 +1423,37 @@ You are a Quality Reviewer for Oracle University training design documents.
 
 Review the following document and answer ONLY in a JSON object with this exact schema:
 {{
-  "sections_present": {{"COURSE OVERVIEW": true/false, "PERSONA INFORMATION": true/false,
-    "IMPLEMENTATION READINESS": true/false, "GTM MESSAGING": true/false,
-    "COURSE COVERAGE TABLE": true/false, "CASE STUDY": true/false, "QA CHECKLIST": true/false}},
+  "sections_present": {{
+    "COURSE OVERVIEW": true/false,
+    "COURSE END GOAL": true/false,
+    "PERSONA INFORMATION": true/false,
+    "IMPLEMENTATION READINESS": true/false,
+    "GTM MESSAGING": true/false,
+    "COURSE COVERAGE TABLE": true/false,
+    "END GOAL CHECKLIST": true/false,
+    "ASSESSMENT TOPICS": true/false,
+    "CASE STUDY": true/false,
+    "QA CHECKLIST": true/false,
+    "TRACEABILITY MAP": true/false
+  }},
   "course_coverage_is_table": true/false,
+  "coverage_table_has_required_columns": true/false,
   "qa_checklist_is_table": true/false,
+  "end_goal_uses_formula": true/false,
+  "gtm_has_linkedin_post": true/false,
+  "gtm_has_newsletter": true/false,
+  "end_goal_checklist_has_i_can_statements": true/false,
+  "assessment_topics_table_present": true/false,
+  "no_bare_oracle_knowledge_base_tags": true/false,
   "missing_or_malformed": ["list any issues"],
   "overall": "PASS" or "FAIL"
 }}
+
+Required columns in COURSE COVERAGE TABLE:
+Module #, Module Title, Module Learning Objective, Topic #, Topic Title,
+What We Teach in This Topic/Lesson, Bloom's Level, Activity Type,
+Est. Video Duration, Key Takeaways, Matching Hands-On Lab, Lab Type,
+Lab Duration, Source Ref.
 
 DOCUMENT TO REVIEW:
 {ai_output[:6000]}
@@ -851,30 +1557,97 @@ Study the document below carefully. Your output MUST:
 {benchmark_text[:18000] if benchmark_text.strip() else SAMPLE_DESIGN_DOCUMENT}
 
 ═══════════════════════════════════════
-REQUIRED OUTPUT STRUCTURE (use EXACTLY these headers)
+REQUIRED OUTPUT STRUCTURE (use EXACTLY these headers, in this order)
 ═══════════════════════════════════════
+
 --- COURSE OVERVIEW
+  Include: Course Title, Product Area, Training Need, Target Audience, Course Description,
+  Benefits to Learner, 80/20 Rationale, Assumptions & Open Questions.
+
+--- COURSE END GOAL
+  State the end goal using the formula:
+    "Be able to [ACTION + WHAT] in [CONTEXT] without [DEPENDENCY]"
+  Then provide a LEARNING JOURNEY SUMMARY: 3–5 sentence narrative of the full learning arc.
+
 --- PERSONA INFORMATION
+  For each persona: Name, Role, Top 5 Responsibilities, Top 3 Pain Points,
+  Learning Preferences, Tech-Savviness, Success Metric.
+
 --- IMPLEMENTATION READINESS
+  Cover: Learner prerequisites, Access/environment prerequisites, Required tools/materials,
+  Accessibility & delivery notes, Assessment plan with pass criteria.
+
 --- GTM MESSAGING
+  5a. Core GTM Message (5 required elements: product description, USP, target roles,
+      business problems solved, learner takeaways).
+  5b. LinkedIn Post (150–250 words, course-specific, ready to publish).
+  5c. Newsletter Write-Up (200–300 words, course-specific, ready to use with headline).
+
 --- COURSE COVERAGE TABLE
+  This is the most detailed section. One row per TOPIC (not per module — a module has multiple topics).
+  Use this EXACT markdown table format with ALL columns:
+
+| Module # | Module Title | Module Learning Objective | Topic # | Topic Title | What We Teach in This Topic/Lesson | Bloom's Level | Activity Type | Est. Video Duration (min) | Key Takeaways (3–5 action-oriented) | Matching Hands-On Lab | Lab Type | Lab Duration (min) | Source Ref |
+|----------|-------------|--------------------------|---------|-------------|-----------------------------------|---------------|---------------|--------------------------|-------------------------------------|----------------------|----------|-------------------|------------|
+
+  Column guidance:
+  • Module Learning Objective — one Bloom's-verb sentence per module (repeat on each row for that module).
+  • Topic Title — the individual video/lesson title.
+  • What We Teach in This Topic/Lesson — 2–3 sentence content summary for this specific topic.
+  • Key Takeaways — 3–5 bullet points using Bloom's action verbs; what the learner can DO after this topic.
+  • Matching Hands-On Lab — lab title if applicable, or "N/A".
+  • Lab Type — "Guided" / "Unguided" / "N/A".
+  • Lab Duration (min) — numeric value only if lab exists, else "—".
+  • Source Ref — MUST be [FILE: exact_filename] or [URL: full_url] or [ORACLE KNOWLEDGE BASE: topic_area].
+    Never use a bare [ORACLE KNOWLEDGE BASE] without specifying the topic area.
+
+  After the table, add:
+  • One paragraph justifying the module sequencing (foundational → advanced rationale).
+  • TOTAL ESTIMATED SEAT TIME calculation.
+
+--- END GOAL CHECKLIST
+  Provide 5–8 "I can…" self-assessment statements directly tied to the Course End Goal.
+  Each statement must be specific, measurable, and use a Bloom's action verb.
+  Example format:
+  | # | I Can Statement | Bloom's Level | Maps to Module |
+
+--- ASSESSMENT TOPICS
+  Provide a table of 5–10 assessment topic areas:
+  | # | Assessment Topic | Rationale | Suggested Type | Difficulty Level |
+  Difficulty levels: Foundational / Intermediate / Advanced.
+  Suggested types: Knowledge Check Quiz / Scenario-Based Question / Practical Exercise.
+
 --- CASE STUDY
+  Sections: Goal | Scenario | Requirement | Steps to Implement | Expected Outcome.
+  Ground the case study in a realistic persona use case from the PERSONA INFORMATION section.
+
 --- QA CHECKLIST
+  Mandatory markdown table:
+  | # | Check | Pass/Fail |
+  Must include these checks at minimum:
+  1. Every job task maps to at least one skill and at least one module/topic.
+  2. 80/20 prioritisation rationale included and grounded in business impact.
+  3. Bloom's level assigned for every topic; objectives use measurable action verbs.
+  4. Balanced mix achieved per module (Concept + Demo + Lab + Scenario).
+  5. No out-of-scope content; gaps captured under Assumptions & Open Questions.
+  6. Course End Goal stated using the prescribed formula.
+  7. Learning Journey Summary (3–5 sentences) present.
+  8. End Goal Checklist (5–8 "I can…" statements) present.
+  9. Assessment Topics table (5–10 rows) present.
+  10. GTM section includes LinkedIn Post AND Newsletter Write-Up.
+  11. All Source Refs are specific — no bare [ORACLE KNOWLEDGE BASE] tags.
+  12. Total estimated seat time calculated and stated.
+
 --- TRACEABILITY MAP
+  Mandatory markdown table:
+  | Source Tag | Full Reference Detail | Document Section(s) Used In |
+  • For [FILE:] tags: include filename and page/slide reference if available.
+  • For [URL:] tags: include the full URL.
+  • For [ORACLE KNOWLEDGE BASE:] tags: include the specific topic area.
 
-Each section must be complete, detailed and grounded in the source knowledge above.
-
-COURSE COVERAGE TABLE must be a proper markdown table with these columns:
-| Module # | Module Title | Topics | Bloom's Level | Activity Type | Duration | Source Ref |
-
-QA CHECKLIST must be a proper markdown table with columns:
-| # | Check | Pass/Fail |
-
-TRACEABILITY MAP must be a proper markdown table with columns:
-| Source Tag | Document Section(s) |
-
-Cite [FILE: filename] or [URL: link] for every factual claim.
-If no source available: [ORACLE KNOWLEDGE BASE].
+Cite [FILE: filename] or [URL: full_link] for every factual claim.
+If no external source is available, use [ORACLE KNOWLEDGE BASE: specific_topic_area].
+NEVER use a bare [ORACLE KNOWLEDGE BASE] tag without a topic qualifier.
 """
 
 
@@ -1491,10 +2264,23 @@ elif st.session_state.step == 4:
                     st.markdown(f"- {issue}")
             else:
                 st.markdown("✅ No structural issues detected.")
-            if vr.get("course_coverage_is_table") is False:
-                st.warning("⚠️ COURSE COVERAGE TABLE was not rendered as a markdown table — consider refining.")
-            if vr.get("qa_checklist_is_table") is False:
-                st.warning("⚠️ QA CHECKLIST was not rendered as a markdown table — consider refining.")
+
+            # Enhanced checks
+            checks = [
+                ("course_coverage_is_table",               "Coverage Table rendered as markdown table"),
+                ("coverage_table_has_required_columns",    "Coverage Table has all required columns"),
+                ("qa_checklist_is_table",                  "QA Checklist rendered as markdown table"),
+                ("end_goal_uses_formula",                  "Course End Goal uses prescribed formula"),
+                ("gtm_has_linkedin_post",                  "GTM section includes LinkedIn Post"),
+                ("gtm_has_newsletter",                     "GTM section includes Newsletter Write-Up"),
+                ("end_goal_checklist_has_i_can_statements","End Goal Checklist has 'I can…' statements"),
+                ("assessment_topics_table_present",        "Assessment Topics table present (5–10 rows)"),
+                ("no_bare_oracle_knowledge_base_tags",     "No bare [ORACLE KNOWLEDGE BASE] tags (all elaborated)"),
+            ]
+            for key, label in checks:
+                val = vr.get(key)
+                if val is False:
+                    st.warning(f"⚠️ {label} — needs attention.")
 
         # ── Reliability Audit with Traceability Map (Enhancement 2) ──────────
         audit = st.session_state.audit or {}
