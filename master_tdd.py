@@ -1,1883 +1,1405 @@
 """
-Oracle University — Training Design Agent  (Enhanced v3) - 24-Mar
-Full-Stack: Multi-Step Streamlit Frontend + AI Backend (Groq / LLaMA-3.3-70B)
-
-Enhancements over v2:
-  A.  Hard cap raised from 20,000 → 60,000 characters (safety net)
-  B.  Smart relevance filtering — scores every paragraph against course title
-      and job roles, keeps only the highest-scoring chunks up to the cap
-  C.  Per-file AI summarisation — each uploaded file is summarised by a
-      dedicated AI call BEFORE the main design prompt, so 100-page PDFs
-      are fully represented as a tight, complete summary
-
-Install:
-    pip install streamlit requests groq pdfplumber python-pptx python-docx \
-                Pillow pytesseract pdf2image reportlab beautifulsoup4 urllib3
-
-Run:
-    streamlit run master_tdd_enhanced_v3.py
+╔══════════════════════════════════════════════════════════════════════════════╗
+║          TRAINING DESIGN AGENT — Oracle University                          ║
+║          Single-file Streamlit App · Groq LLaMA-3.3-70B                    ║
+║                                                                              ║
+║  SECTIONS (use Ctrl+F to jump):                                              ║
+║   1. IMPORTS & CONSTANTS                                                     ║
+║   2. PROMPTS  (No-Labs / Yes-Labs system prompts)                            ║
+║   3. SESSION STATE                                                           ║
+║   4. THEME & CSS                                                             ║
+║   5. FILE UTILITIES  (extraction, OCR, copyright scan)                       ║
+║   6. URL CRAWLER                                                             ║
+║   7. LLM CLIENT  (Groq call, prompt builder, quality check)                 ║
+║   8. EXPORT  (Oracle-branded DOCX + PDF)                                    ║
+║   9. SCREEN 1 — Course Information & Target Audience                        ║
+║  10. SCREEN 2 — Source Content                                               ║
+║  11. SCREEN 3 — Generate, Audit & Export                                    ║
+║  12. MAIN ROUTER                                                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
-# ─── IMPORTS ────────────────────────────────────────────────────────────────
-import streamlit as st
-import time, io, re, os, json
-import requests
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. IMPORTS & CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+import io
+import os
+import re
+import html as html_lib
+import logging
+import subprocess
+import tempfile
+import urllib.request
+import urllib.parse
+import urllib.error
 from datetime import datetime
-from urllib.parse import urlparse, urljoin
-from bs4 import BeautifulSoup
-from collections import defaultdict
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Optional
 
-# --- File Extraction ---
-import pdfplumber
-from pptx import Presentation
-from docx import Document as DocxRead
-from PIL import Image
-import pytesseract
-from pdf2image import convert_from_bytes
+import streamlit as st
 
-# --- AI ---
-from groq import Groq
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
-# --- Document Generation ---
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer,
-    Table as RLTable, TableStyle, HRFlowable,
-)
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from reportlab.lib.units import cm as rl_cm
-from docx import Document as DocxDocument
-from docx.shared import Pt, RGBColor, Inches, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
+# ── Oracle brand colours ──────────────────────────────────────────────────────
+ORACLE_RED      = "#C74634"
+ORACLE_DARK     = "#3A3A3A"
+ORACLE_GREY     = "#F5F5F5"
+ORACLE_BORDER   = "#E0E0E0"
+ORACLE_RED_HEX  = "C74634"
+ORACLE_DARK_HEX = "3A3A3A"
+ORACLE_GREY_HEX = "F0F0F0"
 
+# ── LLM settings ──────────────────────────────────────────────────────────────
+GROQ_MODEL  = "llama-3.3-70b-versatile"
+MAX_TOKENS  = 8000
 
-# ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Training Design Agent | Oracle University",
-    page_icon="🔴",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+# ── File ingestion limits ─────────────────────────────────────────────────────
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".txt", ".csv"}
+BLOCKED_EXTENSIONS = {".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".aac", ".flac", ".ogg"}
 
+# ── Copyright scanner keyword patterns ───────────────────────────────────────
+COPYRIGHT_PATTERNS = {
+    "copyright": [r"©", r"\bcopyright\b", r"all rights reserved"],
+    "trademark": [r"™", r"®", r"\btrademark\b"],
+    "restricted": [r"\bconfidential\b", r"\bproprietary\b", r"do not distribute"],
+    "licensed":  [r"\blicensed\b", r"license agreement", r"unauthorized use prohibited"],
+}
 
-# ─── MANDATORY SECTIONS ───────────────────────────────────────────────────────
-MANDATORY_SECTIONS = [
-    "COURSE OVERVIEW",
-    "COURSE END GOAL",
-    "PERSONA INFORMATION",
-    "IMPLEMENTATION READINESS",
-    "GTM MESSAGING",
-    "COURSE COVERAGE TABLE",
-    "END GOAL CHECKLIST",
-    "ASSESSMENT TOPICS",
-    "CASE STUDY",
-    "CHECKLIST",
+# ── URL crawler limits ────────────────────────────────────────────────────────
+MAX_LINKS_PER_LEVEL = 15
+MAX_CRAWL_CHARS     = 40_000
+CRAWL_DEPTH         = 2
+CRAWL_TIMEOUT       = 10
+
+# ── Required sections for QA check ───────────────────────────────────────────
+REQUIRED_SECTIONS_BASE = [
+    "Course Overview", "Course Title", "Product Area", "Training Need",
+    "Target Audience", "Learning Objectives", "Benefits to Learner",
+    "Course Description", "Assumptions", "Implementation Readiness",
+    "GTM Messaging", "Course Coverage", "Case Study",
+    "QA Checklist", "Traceability Map",
 ]
 
-# ─── OPTION A: Raised hard cap ────────────────────────────────────────────────
-# Previously 20,000. Now 60,000 characters — well within LLaMA-3.3-70B's
-# 128k-token context window. Acts as final safety net after B & C.
-KNOWLEDGE_HARD_CAP = 60_000
+STEP_LABELS = {
+    1: "📋  Course Information",
+    2: "📂  Source Content",
+    3: "🚀  Generate & Export",
+}
 
 
-# ─── DESIGN MASTER CLASS PRINCIPLES ──────────────────────────────────────────
-_DMC_FILE = os.path.join(os.path.dirname(__file__), "design_master_class.txt")
-if os.path.exists(_DMC_FILE):
-    with open(_DMC_FILE, "r", encoding="utf-8") as _f:
-        DESIGN_MASTER_CLASS_PRINCIPLES = _f.read()
-else:
-    DESIGN_MASTER_CLASS_PRINCIPLES = """
-=== ORACLE DESIGN MASTER CLASS — FULL FRAMEWORK ===
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. PROMPTS
+# ══════════════════════════════════════════════════════════════════════════════
 
-PRINCIPLE 1 — 80/20 CONTENT FOCUS
-  Identify the 20 % of product capabilities that deliver 80 % of business value for the
-  target role. Anchor every module to at least one of these high-value capabilities.
-  Explicitly call out the rationale in the Course Overview.
-  Include a brief 80/20 Rationale block (1–2 bullets) stating exactly what was prioritised
-  and why — grounded in job-role frequency and business impact, not arbitrary selection.
+NO_LABS_SYSTEM_PROMPT = """
+You are an expert Oracle University Instructional Designer AI agent. Your task is to create a complete, learner-centric Training Design Document aligned to modern instructional design standards. The design must be practical, implementation-ready, and mapped directly to real job performance.
 
-PRINCIPLE 2 — LEARNING DESIGN PHILOSOPHY & BLOOM'S TAXONOMY ALIGNMENT
+PROCESS & GUARDRAILS (REQUIRED):
+- Use only the provided Product Documentation / Source Content for product capabilities; do not invent features, UI flows, terminology, or configurations. If information is missing, capture it under "Assumptions & Open Questions."
+- Keep all content strictly within the specified product scope and target job roles. Explicitly exclude out-of-scope topics.
+- If any critical input seems missing or unclear, note it under Assumptions & Open Questions — do NOT fabricate information.
 
-  2a. DESIGN PHILOSOPHY — FOUR MENTAL FILTERS (apply to every content decision):
-    1. Start with the user     — always design from the learner's perspective.
-    2. Teach tasks, not tools  — focus on what the learner needs to DO, not what the product CAN do.
-    3. Simplify with purpose   — every element must answer "what's in it for me?" for the learner.
-    4. Show, don't just tell   — prioritise demonstration and application over passive delivery.
+INSTRUCTIONAL DESIGN STANDARDS:
+- Map each job task to specific required skills. Ensure every module supports measurable on-the-job performance.
+- Apply the 80-20 principle. Include a brief 80/20 rationale (1-2 bullets).
+- Write measurable, performance-based learning objectives using Bloom's Taxonomy action verbs.
+- Assign Bloom's levels for each topic (Remember, Understand, Apply, Analyze, Evaluate, Create).
 
-  2b. COURSE END GOAL (North Star — referenced throughout every design decision):
-    State explicitly: what the learner will be able to DO after the course.
-    Use this formula:
-      "Be able to [ACTION + WHAT] in [CONTEXT] without [DEPENDENCY]"
-    Example: "Independently deploy, configure, and monitor the product in a production
-    environment without external support."
-    A vague end goal produces a vague course. Every module, topic, and activity must
-    trace back to this end goal.
+COURSE STRUCTURE:
+- Learning Progression: Foundational → Intermediate → Advanced
+- Content Mix per module: Concepts → Demonstrations → Scenarios
+- Each Topic (one video) duration target: 3-7 minutes. Include estimated total course seat time.
+- Each module must include at least: 1 Concept topic, 1 Demonstration topic, 1 Scenario/Job-based exercise.
 
-  2c. BLOOM'S TAXONOMY ALIGNMENT:
-    Map every learning objective to a Bloom's level verb appropriate for the audience tier:
-      Beginner    → Remember / Understand  (define, describe, identify, explain)
-      Intermediate→ Apply / Analyse        (configure, implement, compare, troubleshoot)
-      Advanced    → Evaluate / Create      (design, optimise, justify, architect)
-    Objectives must be SMART (Specific, Measurable, Achievable, Relevant, Time-bound).
-    Use measurable Bloom's action verbs (configure, deploy, troubleshoot, architect) —
-    never passive knowledge statements.
+DESIGN PRINCIPLES (apply to every piece of content):
+- Start with the user. Teach tasks, not just tools. Simplify with purpose. Show, don't just tell.
 
-  2d. LEARNING JOURNEY SUMMARY:
-    Include a 3–5 sentence narrative describing the complete learning arc from start to
-    finish — how the learner progresses from foundational awareness to confident
-    independent performance.
+PERSONA PROFILES: For each persona include: name, role, top 5 responsibilities, top 3 pain points, learning preferences.
 
-  2e. MODULE BREAKDOWN REQUIREMENTS:
-    For every module and every lesson/topic within it, explicitly state:
-      • Connection to the Course End Goal
-      • Estimated duration
-      • What is taught (content summary)
-      • 3–5 action-oriented Key Takeaways using Bloom's verbs
+LEARNING OUTCOMES: 5-8 course-level outcomes + one per module. All must be SMART using Bloom's action verbs.
 
-  2f. WHAT YOU CAN DO NOW (closing statement per module):
-    End each module description with a motivating 1–2 sentence statement confirming
-    what the learner can now independently accomplish.
+SKILL CHECKS: 2 scenario-based questions per module with 4 options (A/B/C/D), plausible distractors, one correct answer tied to a learning outcome.
 
-  2g. END GOAL CHECKLIST:
-    The document must include 5–8 "I can…" self-assessment statements directly tied
-    to the Course End Goal. These confirm readiness and close the learning loop.
-    Example: "I can configure a REST adapter connection in OIC without referencing
-    the user guide."
+GTM MESSAGING must cover all 5: what the product is, what makes it stand out, who it's for, what problems it solves, what learners take away.
 
-  2h. ASSESSMENT TOPICS:
-    Provide 5–10 assessment topic areas with:
-      • Topic name
-      • Rationale (why this is assessed)
-      • Suggested assessment type (quiz / scenario / practical exercise)
-      • Difficulty level (Foundational / Intermediate / Advanced)
+TRACEABILITY: Tag every factual claim with [FILE: filename], [URL: https://...], or [INPUT]. At the end, add a TRACEABILITY MAP section as a markdown table: | Source Tag | Reference Detail | Document Section |
 
-PRINCIPLE 3 — MICROLEARNING ARCHITECTURE
-  Every video or concept block: 3–7 minutes maximum.
-  Every module: no more than 4 activities (Concept → Demo → Lab → Scenario).
-  Provide an estimated seat-time per topic, per lab, per module, and a cumulative
-  course total.
+OUTPUT — follow this EXACT structure (do not omit any section):
 
-PRINCIPLE 4 — BALANCED ACTIVITY MIX
-  Each module MUST include exactly:
-    1 × Concept explanation  (lecture / reading)
-    1 × Instructor/recorded Demo
-    1 × Hands-on Lab (guided or open-ended, scaled to level)
-    1 × Scenario or Case-study question
-  Activities may be combined where appropriate but all four types must be present.
+---
+## Course Overview
+**Course Title:**
+**Product Area:**
+**Training Need:**
+**Target Audience:**
 
-PRINCIPLE 5 — GTM MESSAGING FRAMEWORK (FULL — READY TO USE)
-  The GTM section MUST include ALL of the following elements:
+**Learning Objectives:**
+1.
+2.
+3.
+4.
+5.
 
-  5a. CORE GTM MESSAGE (5 elements, jargon-free, one-minute pitch):
-    1. What the product is         — brief plain-language description
-    2. What makes it stand out     — USP aligned with Product team positioning (≤ 25 words)
-    3. Who the course is for       — specific target roles / teams
-    4. What business problems it solves — 3–5 bullet points
-    5. What learners will take away — 5–7 outcomes phrased as business results
+**80/20 Prioritization Rationale:**
+- 
+- 
 
-  5b. LINKEDIN POST (150–250 words, course-specific, ready to publish):
-    Write a compelling LinkedIn post announcing this specific course. It must:
-      • Open with a hook relevant to the learner's pain point
-      • Name the course and product explicitly
-      • Call out 2–3 key outcomes learners will achieve
-      • Include a clear call-to-action (enrol, learn more, etc.)
-      • Use professional but conversational tone
-      • Be specific to this course content — NOT generic Oracle marketing copy
+**Benefits to Learner:**
+**Course Description:**
 
-  5c. NEWSLETTER WRITE-UP (200–300 words, course-specific, ready to use):
-    Write a newsletter announcement for this specific course. It must include:
-      • Headline
-      • Opening paragraph (what, why it matters now)
-      • Key learning outcomes (3–4 bullets)
-      • Who should enrol and why
-      • Call-to-action with urgency or relevance framing
-      • Be specific to this course — NOT a template with placeholder text
+**Assumptions & Open Questions:**
+- Assumptions:
+- Open Questions:
 
-PRINCIPLE 6 — PREREQUISITE CHAIN (FOUNDATIONAL → ADVANCED)
-  Arrange modules so every module builds on the prior one.
-  Module 1 is always foundational (concepts, terminology, architecture overview).
-  Advanced configuration / design modules come last.
-  State explicit prerequisites between modules inside the Coverage Table.
+---
+## Persona Profiles
+| Persona Name | Role | Top 5 Responsibilities | Top 3 Pain Points | Learning Preferences |
+|---|---|---|---|---|
 
-PRINCIPLE 7 — AUDIENCE PERSONA FIDELITY
-  For each persona, provide a full profile:
-    • Name (representative, not generic)
-    • Role title
-    • Top 5 day-to-day responsibilities
-    • Top 3 pain points
-    • Learning preferences
-    • Tech-savviness level
-    • Primary business metric they are measured on
-  Ground every content decision in these persona profiles.
+---
+## Implementation Readiness
+**Prerequisites (learner):**
+**Prerequisites (access):**
+**Required tools/materials:**
+**Accessibility & delivery:**
+**Assessment plan:**
 
-PRINCIPLE 8 — TRACEABILITY & CITATIONS
-  Every factual claim must carry a source tag. Use these formats:
-    [FILE: exact_filename.ext] — for uploaded documents
-    [URL: full_url_path]       — for scraped web pages (include the actual URL, not just the domain)
-    [ORACLE KNOWLEDGE BASE: topic_area] — only when no file or URL is available;
-      must include the specific topic area (e.g., [ORACLE KNOWLEDGE BASE: OIC Adapter Configuration])
-      so the reader knows what domain knowledge was used.
-  NEVER use a bare [ORACLE KNOWLEDGE BASE] tag without elaboration.
-  The document must end with a TRACEABILITY MAP table.
+---
+## GTM Messaging
+**What the product is:**
+**What makes it stand out:**
+**Who the course is for:**
+**What business problems it helps solve:**
+**What learners will take away:**
 
-PRINCIPLE 9 — ROLE & SKILL ALIGNMENT
-  Map each job task to the specific skills it requires.
-  Every module must support measurable on-the-job performance for the target role.
-  No module may exist solely to explain product features — it must tie to a real job task.
+---
+## Course Coverage
+| MODULE # | MODULE TITLE | MODULE LEARNING OBJECTIVE | TOPIC LIST | MATCHING SCENARIO EXERCISE |
+|---|---|---|---|---|
 
-PRINCIPLE 10 — SKILL CHECKS & ASSESSMENT DESIGN
-  Design assessments (quizzes, practical exercises, scenario-based questions) that
-  directly measure the stated learning outcomes.
-  Every skill check question must:
-    1. Be tied to a specific module or learning outcome.
-    2. Present a realistic scenario or task — not a trivial recall question.
-    3. Include plausible distractors reflecting common learner misconceptions.
-    4. Have one clearly correct answer that directly reflects the content taught.
+(For TOPIC LIST: Topic Title | Bloom Level | Measurable Topic Objective | Est. Video Duration (min))
+(For MATCHING SCENARIO EXERCISE: Scenario Title | Scenario Type | Success Criteria)
 
-=== END DESIGN MASTER CLASS FRAMEWORK ===
+---
+## Skill Checks
+(2 scenario-based questions per module, 4 options each, correct answer identified)
+
+---
+## Case Study
+**Goal:**
+**Scenario:**
+**Requirement:**
+**Steps to Implement:**
+**Expected Outcome:**
+
+---
+## QA Checklist
+- [ ] Every job task maps to at least one skill and module/topic
+- [ ] 80/20 prioritization rationale included
+- [ ] Bloom level assigned for every topic; objectives use measurable action verbs
+- [ ] Balanced mix achieved per module (Concept + Demo + Scenario)
+- [ ] No out-of-scope content; gaps captured under Assumptions & Open Questions
+- [ ] All learning outcomes are SMART
+- [ ] GTM messaging covers all 5 required elements
+
+---
+## TRACEABILITY MAP
+| Source Tag | Reference Detail | Document Section |
+|---|---|---|
+
+Write in a professional, clear, learner-focused tone. Fully populate every section. No placeholders.
+"""
+
+YES_LABS_SYSTEM_PROMPT = """
+You are an expert Oracle University Instructional Designer AI agent. Your task is to create a complete, learner-centric Training Design Document aligned to modern instructional design standards. The design must be practical, implementation-ready, and mapped directly to real job performance.
+
+PROCESS & GUARDRAILS (REQUIRED):
+- Use only the provided Product Documentation / Source Content for product capabilities; do not invent features, UI flows, terminology, or configurations. If information is missing, capture it under "Assumptions & Open Questions."
+- Keep all content strictly within the specified product scope and target job roles. Explicitly exclude out-of-scope topics.
+- If any critical input seems missing or unclear, note it under Assumptions & Open Questions — do NOT fabricate information.
+
+INSTRUCTIONAL DESIGN STANDARDS:
+- Map each job task to specific required skills. Ensure every module supports measurable on-the-job performance.
+- Apply the 80-20 principle. Include a brief 80/20 rationale (1-2 bullets).
+- Write measurable, performance-based learning objectives using Bloom's Taxonomy action verbs.
+- Assign Bloom's levels for each topic (Remember, Understand, Apply, Analyze, Evaluate, Create).
+
+COURSE STRUCTURE:
+- Learning Progression: Foundational → Intermediate → Advanced
+- Content Mix per module: Concepts → Demonstrations → Labs → Scenarios
+- Each Topic (one video) duration: 3-7 minutes. Provide duration per topic AND per lab. Include estimated total course seat time.
+- Each module must include at least: 1 Concept topic, 1 Demonstration topic, 1 Hands-on Lab, 1 Scenario/Job-based exercise.
+
+DESIGN PRINCIPLES (apply to every piece of content):
+- Start with the user. Teach tasks, not just tools. Simplify with purpose. Show, don't just tell.
+
+PERSONA PROFILES: For each persona include: name, role, top 5 responsibilities, top 3 pain points, learning preferences.
+
+LEARNING OUTCOMES: 5-8 course-level outcomes + one per module. All must be SMART using Bloom's action verbs.
+
+HANDS-ON LABS: Simulate real-world Oracle tasks. Include both guided and unguided types. Provide success criteria (1-2 bullets) per lab.
+
+SKILL CHECKS: 2 scenario-based questions per module with 4 options (A/B/C/D), plausible distractors, one correct answer tied to a learning outcome.
+
+GTM MESSAGING must cover all 5: what the product is, what makes it stand out, who it's for, what problems it solves, what learners take away.
+
+TRACEABILITY: Tag every factual claim with [FILE: filename], [URL: https://...], or [INPUT]. At the end, add a TRACEABILITY MAP section as a markdown table: | Source Tag | Reference Detail | Document Section |
+
+OUTPUT — follow this EXACT structure (do not omit any section):
+
+---
+## Course Overview
+**Course Title:**
+**Product Area:**
+**Training Need:**
+**Target Audience:**
+
+**Learning Objectives:**
+1.
+2.
+3.
+4.
+5.
+
+**80/20 Prioritization Rationale:**
+- 
+- 
+
+**Benefits to Learner:**
+**Course Description:**
+
+**Assumptions & Open Questions:**
+- Assumptions:
+- Open Questions:
+
+---
+## Persona Profiles
+| Persona Name | Role | Top 5 Responsibilities | Top 3 Pain Points | Learning Preferences |
+|---|---|---|---|---|
+
+---
+## Implementation Readiness
+**Prerequisites (learner):**
+**Prerequisites (access):**
+**Required tools/materials:**
+**Accessibility & delivery:**
+**Assessment plan:**
+
+---
+## GTM Messaging
+**What the product is:**
+**What makes it stand out:**
+**Who the course is for:**
+**What business problems it helps solve:**
+**What learners will take away:**
+
+---
+## Course Coverage
+| MODULE # | MODULE TITLE | MODULE LEARNING OBJECTIVE | TOPIC LIST | MATCHING HANDS-ON LAB | HANDS-ON LAB DURATION (MINUTES) |
+|---|---|---|---|---|---|
+
+(For TOPIC LIST: Topic Title | Bloom Level | Measurable Topic Objective | Est. Video Duration (min))
+(For MATCHING HANDS-ON LAB: Lab Title | Lab Type (guided/unguided) | Success Criteria)
+
+---
+## Skill Checks
+(2 scenario-based questions per module, 4 options each, correct answer identified)
+
+---
+## Case Study
+**Goal:**
+**Scenario:**
+**Requirement:**
+**Steps to Implement:**
+**Expected Outcome:**
+
+---
+## QA Checklist
+- [ ] Every job task maps to at least one skill and module/topic
+- [ ] 80/20 prioritization rationale included
+- [ ] Bloom level assigned for every topic; objectives use measurable action verbs
+- [ ] Balanced mix achieved per module (Concept + Demo + Lab + Scenario)
+- [ ] No out-of-scope content; gaps captured under Assumptions & Open Questions
+- [ ] All learning outcomes are SMART
+- [ ] GTM messaging covers all 5 required elements
+- [ ] Each module includes at least 1 lab with success criteria
+
+---
+## TRACEABILITY MAP
+| Source Tag | Reference Detail | Document Section |
+|---|---|---|
+
+Write in a professional, clear, learner-focused tone. Fully populate every section. No placeholders.
 """
 
 
-# ─── SAMPLE COMPLETED DESIGN DOCUMENT ────────────────────────────────────────
-_SAMPLE_FILE = os.path.join(os.path.dirname(__file__), "sample_design_document.txt")
-if os.path.exists(_SAMPLE_FILE):
-    with open(_SAMPLE_FILE, "r", encoding="utf-8") as _f:
-        SAMPLE_DESIGN_DOCUMENT = _f.read()
-else:
-    SAMPLE_DESIGN_DOCUMENT = """
-=== REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE ===
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. SESSION STATE
+# ══════════════════════════════════════════════════════════════════════════════
 
---- COURSE OVERVIEW
-Course Title   : Oracle Integration Cloud Fundamentals
-Product Area   : Oracle Integration Cloud (OIC) 3.0
-Training Need  : Developers and Architects lack hands-on OIC skills, causing slow
-                 integration delivery and brittle custom-script workarounds.
-Target Audience: Integration Developers, IT Architects (Intermediate level)
-Duration       : 12 hours (8 modules × avg 90 min)
-Delivery       : Instructor-led + self-paced eLearning
-
-Course Description:
-This course equips Integration Developers and Architects with the end-to-end skills
-to design, build, and monitor enterprise integrations using Oracle Integration Cloud.
-Learners exit able to configure REST and SOAP adapters, build orchestration flows,
-and instrument error handling and monitoring dashboards.
-
-80/20 Rationale:
-  • REST adapter configuration and Orchestration flow design account for ~80% of
-    production OIC usage — these receive the deepest treatment (Modules 3–6).
-  • Monitoring and governance (20%) are covered efficiently in Modules 7–8 since
-    they leverage the same UI patterns already learned. [ORACLE KNOWLEDGE BASE: OIC Usage Analytics]
-
-Assumptions & Open Questions:
-  • Assumed learners have completed OCI Foundations badge.
-  • Open: Does the client require localisation (languages other than English)?
-
---- COURSE END GOAL
-End Goal: Be able to independently design, deploy, and monitor multi-step enterprise
-integrations in Oracle Integration Cloud in a production tenancy without external support.
-
-Learning Journey Summary:
-Learners begin by grounding themselves in OIC architecture and core concepts (Module 1),
-then progressively configure connections, build their first integration, and apply
-orchestration patterns (Modules 2–4). The mid-section deepens skills in data mapping
-and error handling — the two most common sources of production failures (Modules 5–6).
-The journey closes with monitoring, observability, and governance (Modules 7–8), so
-learners can sustain and scale what they have built. By the end, learners can own an
-integration end-to-end from requirement to production deployment.
-
---- PERSONA INFORMATION
-Primary Persona  : Priya — Integration Developer
-  Top 5 Responsibilities: Build and maintain SaaS-to-ERP integrations; troubleshoot
-    failed message flows; document integration architecture; coordinate with API teams;
-    govern naming conventions and versioning.
-  Top 3 Pain Points: Manual data movement between systems; brittle custom scripts that
-    break on schema changes; no centralised visibility into integration failures.
-  Learning Preferences: Hands-on labs, worked examples, searchable reference docs.
-  Tech-Savviness: Comfortable with REST APIs and basic SQL; new to OIC.
-  Success Metric: # integrations delivered per sprint.
-
-Secondary Persona: Rohan — IT Manager
-  Top 5 Responsibilities: Oversee integration governance; manage on-call incidents;
-    report uptime to leadership; audit data flows for compliance; approve new connections.
-  Top 3 Pain Points: Governance gaps; unpredictable error storms; audit failures.
-  Learning Preferences: Dashboards, executive summaries, scenario walkthroughs.
-  Tech-Savviness: Non-coder; relies on dashboards and reports.
-  Success Metric: System uptime; incident MTTR.
-
---- IMPLEMENTATION READINESS
-Prerequisites (Learner): Basic REST/SOAP API knowledge; completed "OCI Foundations" badge (recommended).
-Prerequisites (Access): Oracle Cloud account with OIC provisioned (trial or production);
-  access to Oracle Identity Cloud Service (IDCS); OIC 3.0 instance (Gen 3 preferred).
-Required Tools/Materials: Sample REST endpoint (provided as lab utility); lab exercise guides;
-  OIC_AdminGuide.pdf reference.
-Accessibility & Delivery: Captions required for all video topics; hosted on Oracle MyLearn LMS;
-  English only (localisation TBD — see Open Questions).
-Assessment Plan: Knowledge check quiz per module (≥80% pass); lab completion sign-off;
-  final scenario-based assessment covering Modules 4–6 (task completion criteria).
-
---- GTM MESSAGING
-
-5a. Core GTM Message:
-  Product: Oracle Integration Cloud (OIC) is Oracle's cloud-native integration platform
-    enabling enterprises to connect SaaS, on-premises, and custom applications without
-    writing middleware code.
-  USP: Build enterprise-grade integrations in hours, not weeks — no middleware expertise required.
-  Who it's for: Integration Developers and IT Architects managing Oracle Cloud environments.
-  Business Problems Solved:
-    1. Fragile custom-script integrations breaking on schema changes
-    2. No centralised visibility into integration health and failures
-    3. Long time-to-market for new SaaS application onboarding
-    4. Compliance gaps from undocumented and ungoverned data flows
-  Learner Takeaways:
-    1. Configure and test REST & SOAP adapter connections end-to-end
-    2. Design orchestration flows with branching, looping, and parallel actions
-    3. Implement global fault handlers and automated notification alerts
-    4. Monitor integration activity using built-in dashboards and activity streams
-    5. Apply OIC governance best practices for naming, versioning, and export/import
-
-5b. LinkedIn Post:
-  Still losing hours to broken integrations and mystery failures at 2am?
-  Oracle Integration Cloud can change that — and now there's a course to prove it.
-
-5c. Newsletter Write-Up:
-  Headline: New Course Alert: Master Oracle Integration Cloud from Day One
-
---- COURSE COVERAGE TABLE
-| Module # | Module Title | Module Learning Objective | Topic # | Topic Title | What We Teach in This Topic/Lesson | Bloom's Level | Activity Type | Est. Video Duration (min) | Key Takeaways (3–5 action-oriented) | Matching Hands-On Lab | Lab Type | Lab Duration (min) | Source Ref |
-|----------|-------------|--------------------------|---------|-------------|-----------------------------------|---------------|---------------|--------------------------|-------------------------------------|----------------------|----------|-------------------|------------|
-| 1 | OIC Architecture & Concepts | Describe the OIC platform architecture and identify its core components | 1.1 | Platform Overview | Covers OIC console navigation, tenancy concepts, instance types. | Remember | Concept video | 5 | • Describe OIC's role • Identify Gen2 vs Gen3 • Navigate the console | N/A | N/A | — | [URL: https://docs.oracle.com/en/cloud/paas/application-integration/] |
-
---- END GOAL CHECKLIST
-| # | I Can Statement | Bloom's Level | Maps to Module |
-|---|----------------|---------------|----------------|
-| 1 | I can configure a REST adapter connection and test it without referencing the user guide | Apply | 2 |
-
---- ASSESSMENT TOPICS
-| # | Assessment Topic | Rationale | Suggested Type | Difficulty Level |
-|---|-----------------|-----------|----------------|-----------------|
-| 1 | OIC Core Terminology | Foundational vocabulary underpins all later tasks | Knowledge Check Quiz | Foundational |
-
---- CASE STUDY
-Goal: Automate real-time customer record synchronisation between Salesforce CRM and Oracle ERP Cloud.
-
---- CHECKLIST
-| # | Check | Pass/Fail |
-|---|-------|-----------|
-| 1 | Every job task maps to at least one skill and at least one module/topic | ✅ |
-
-=== END REFERENCE SAMPLE ===
-"""
-
-
-# ─── CUSTOM CSS ──────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter','Helvetica Neue',Arial,sans-serif; }
-
-  .topbar { background:#1A1A2E;color:white;padding:14px 28px;border-radius:10px;
-    margin-bottom:24px;display:flex;align-items:center;justify-content:space-between; }
-  .topbar-left { display:flex;align-items:center;gap:14px; }
-  .topbar-logo { background:#C74634;color:white;padding:6px 14px;border-radius:6px;
-    font-weight:700;font-size:14px;letter-spacing:.04em; }
-  .topbar-title { font-size:15px;font-weight:600;color:rgba(255,255,255,.9); }
-  .topbar-sub   { font-size:12px;color:rgba(255,255,255,.55);margin-top:2px; }
-  .topbar-badge { background:#C74634;color:white;padding:4px 12px;border-radius:20px;
-    font-size:11px;font-weight:600;letter-spacing:.04em; }
-
-  .section-card { background:white;border:1px solid #DDE1E7;border-radius:10px;
-    padding:22px 24px;margin-bottom:18px; }
-  .section-header { display:flex;align-items:center;gap:12px;padding-bottom:14px;
-    margin-bottom:18px;border-bottom:1px solid #DDE1E7; }
-  .section-icon { width:36px;height:36px;background:#E8F4FD;border-radius:8px;
-    display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
-  .section-title { font-size:15px;font-weight:600;color:#1D1D1F; }
-  .section-sub   { font-size:12px;color:#6B7280;margin-top:2px; }
-
-  .gen-step { display:flex;align-items:center;gap:12px;padding:10px 14px;
-    border-radius:8px;margin-bottom:8px;font-size:13px; }
-  .gen-step.done    { background:#DCFCE7;color:#15803D; }
-  .gen-step.active  { background:#E8F4FD;color:#005B8E; }
-  .gen-step.pending { background:#F7F8FA;color:#6B7280; }
-  .gen-dot { width:20px;height:20px;border-radius:50%;display:flex;align-items:center;
-    justify-content:center;font-size:11px;font-weight:700;flex-shrink:0; }
-  .gen-step.done .gen-dot    { background:#15803D;color:white; }
-  .gen-step.active .gen-dot  { background:#005B8E;color:white; }
-  .gen-step.pending .gen-dot { background:#DDE1E7;color:#6B7280; }
-
-  .doc-wrap { background:white;border:1px solid #DDE1E7;border-radius:10px;
-    overflow:hidden;margin-top:16px; }
-  .doc-body { padding:28px 32px; }
-  .doc-h1 { font-size:22px;font-weight:700;color:#1A1A2E;margin-bottom:4px; }
-  .doc-meta-row { display:flex;gap:20px;font-size:12px;color:#6B7280;margin-bottom:18px; }
-
-  #MainMenu,footer,header { visibility:hidden; }
-  .block-container { padding-top:1.5rem!important; }
-  div[data-testid="stToolbar"] { display:none; }
-
-  .stButton>button { border-radius:7px!important;font-weight:600!important;
-    font-size:13px!important;padding:8px 20px!important;transition:all .15s!important; }
-  .stButton>button[kind="primary"] { background:#C74634!important;
-    border-color:#C74634!important;color:white!important; }
-  .stButton>button[kind="primary"]:hover { background:#A83929!important;
-    border-color:#A83929!important; }
-  .stTextInput>div>div>input,.stTextArea>div>div>textarea,.stSelectbox>div>div {
-    border-radius:7px!important;border:1px solid #DDE1E7!important;font-size:13px!important; }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ─── SESSION STATE ─────────────────────────────────────────────────────────────
-def init_state():
+def init_session():
     defaults = {
         "step": 1,
-        "course_title": "",
-        "product_name": "",
-        "job_roles": [],
-        "custom_role": "",
-        "audience_desc": "",
-        "experience_level": "",
-        "prereqs": "",
-        "biz_outcomes": "",
-        "product_context": "",
-        "use_benchmark": False,
-        "benchmark_text": "",
-        "benchmark_filename": "",
-        "urls": [{"type": "Product Docs", "url": ""}],
-        "additional_notes": "",
-        "generated": False,
-        "ai_raw_output": "",
-        "pdf_buf": None,
-        "word_buf": None,
-        "audit": None,
-        "feedback_text": "",
-        "show_feedback": False,
-        "gen_error": "",
-        "file_summaries": [],   # NEW: stores per-file AI summaries
+        # Screen 1
+        "course_title": "", "product_name": "", "context": "",
+        "target_job_roles": "", "job_task_analysis": "",
+        "course_type": "eLearning", "labs_required": False,
+        "audience_level": "Beginner", "prerequisite_knowledge": "",
+        # Screen 2
+        "doc_links": [""], "uploaded_files_meta": [],
+        "additional_text": "", "golden_standard_text": "",
+        "crawled_content": {},
+        # Generation
+        "generated_doc": "", "generation_done": False,
+        "traceability_rows": [], "source_counts": {},
+        # Feedback
+        "user_feedback": "", "regeneration_count": 0,
+        # Export
+        "docx_bytes": None, "pdf_bytes": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
-init_state()
 
-# ─── SECRETS VALIDATION ───────────────────────────────────────────────────────
-_groq_key = st.secrets.get("GROQ_API_KEY", None)
-if not _groq_key:
-    st.error(
-        "🔑 **GROQ_API_KEY not found in Streamlit Secrets.**\n\n"
-        "**To fix this:**\n"
-        "1. Go to your app on [share.streamlit.io](https://share.streamlit.io)\n"
-        "2. Click the **⋮ three-dot menu** next to your app → **Settings** → **Secrets**\n"
-        "3. Paste exactly this (with your real key):\n\n"
-        "```toml\nGROQ_API_KEY = \"gsk_xxxxxxxxxxxxxxxxxxxx\"\n```\n\n"
-        "4. Click **Save** — the app reboots automatically.\n\n"
-        "Get a free key at [console.groq.com](https://console.groq.com) → API Keys."
-    )
-    st.stop()
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. THEME & CSS
+# ══════════════════════════════════════════════════════════════════════════════
 
-GROQ_CLIENT = Groq(api_key=_groq_key)
+def apply_theme():
+    st.markdown(f"""
+    <style>
+    html, body, [class*="css"] {{ font-family: 'Arial', sans-serif; }}
+
+    .oracle-header {{
+        background: {ORACLE_RED}; color: white; padding: 14px 28px;
+        border-radius: 6px; margin-bottom: 24px;
+    }}
+    .oracle-header h1 {{ margin: 0; font-size: 22px; font-weight: 700; }}
+    .oracle-header p  {{ margin: 2px 0 0; font-size: 13px; opacity: 0.88; }}
+
+    .section-card {{
+        background: white; border: 1px solid {ORACLE_BORDER}; border-radius: 8px;
+        padding: 22px 26px; margin-bottom: 18px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }}
+    .section-card h3 {{
+        color: {ORACLE_RED}; margin-top: 0; font-size: 15px;
+        border-bottom: 2px solid {ORACLE_RED}; padding-bottom: 7px; margin-bottom: 14px;
+    }}
+
+    .stButton > button {{
+        background: {ORACLE_RED} !important; color: white !important;
+        border: none !important; border-radius: 5px !important;
+        font-weight: 600 !important; padding: 8px 22px !important;
+    }}
+    .stButton > button:hover {{ background: #a83828 !important; }}
+
+    section[data-testid="stSidebar"] {{ background: {ORACLE_DARK}; }}
+    section[data-testid="stSidebar"] * {{ color: white !important; }}
+
+    .copyright-warning {{
+        background: #fff3cd; border: 1px solid #ffc107;
+        border-left: 5px solid #e6a200; border-radius: 4px; padding: 12px 16px; margin: 8px 0;
+    }}
+    .audit-panel {{
+        background: {ORACLE_GREY}; border: 1px solid {ORACLE_BORDER};
+        border-radius: 6px; padding: 16px 20px;
+    }}
+    .doc-output {{
+        background: white; border: 1px solid {ORACLE_BORDER}; border-radius: 6px;
+        padding: 22px; max-height: 680px; overflow-y: auto;
+        font-size: 13.5px; line-height: 1.7;
+    }}
+    .tooltip-text {{ font-size: 11.5px; color: #777; margin-top: -5px; margin-bottom: 8px; }}
+    .stProgress > div > div > div > div {{ background-color: {ORACLE_RED}; }}
+    </style>
+
+    <div class="oracle-header">
+        <h1>🎓 Training Design Agent</h1>
+        <p>Oracle University · AI-Powered Instructional Design</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_sidebar():
+    step = st.session_state.get("step", 1)
+    with st.sidebar:
+        st.markdown("## Progress")
+        for s, label in STEP_LABELS.items():
+            icon = "✅" if s < step else ("🔵" if s == step else "⬜")
+            st.markdown(f"**{icon} {label}**" if s == step else f"{icon} {label}")
+        st.markdown("---")
+        st.caption("Powered by Groq LLaMA-3.3-70B\n\nGenerates learner-centric training design documents aligned to Oracle instructional design standards.")
+        if step > 1 and st.button("⬅ Back to Step 1"):
+            st.session_state["step"] = 1; st.rerun()
+        if step > 2 and st.button("⬅ Back to Step 2"):
+            st.session_state["step"] = 2; st.rerun()
+
+
+def tip(text):
+    st.markdown(f'<p class="tooltip-text">ℹ️ {text}</p>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BACKEND FUNCTIONS
+# 5. FILE UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── 1. Reliability Audit ──────────────────────────────────────────────────────
-def perform_reliability_audit(text: str) -> dict:
-    audit = {"sections": {}, "traceability_tags": 0, "source_map": defaultdict(list)}
-    for sec in MANDATORY_SECTIONS:
-        found = re.search(rf"---?\s*{sec}", text, re.IGNORECASE)
-        audit["sections"][sec] = bool(found)
-    tags = re.findall(r"\[(FILE|URL|ORACLE KNOWLEDGE BASE)[:\s][^\]]*\]", text)
-    audit["traceability_tags"] = len(tags)
-    current_section = "PREAMBLE"
-    for line in text.splitlines():
-        sec_match = re.match(r"---?\s*([A-Z\s]+)", line)
-        if sec_match:
-            current_section = sec_match.group(1).strip()
-        tag_matches = re.findall(r"\[((?:FILE|URL|ORACLE KNOWLEDGE BASE)[^\]]*)\]", line)
-        for tag in tag_matches:
-            audit["source_map"][tag].append(current_section)
-    return audit
+def validate_extension(filename: str) -> tuple[bool, str]:
+    ext = Path(filename).suffix.lower()
+    if ext in BLOCKED_EXTENSIONS:
+        return False, f"Audio/video files ({ext}) are not supported."
+    if ext not in ALLOWED_EXTENSIONS:
+        return False, f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+    return True, ""
 
 
-# ── 2. URL Scraper with sub-section recursion ─────────────────────────────────
-def extract_url_content(url: str, max_depth: int = 2, max_pages: int = 15) -> str:
-    if not url.strip():
-        return ""
-    seed = url.strip()
-    parsed_seed = urlparse(seed)
-    base_prefix = f"{parsed_seed.scheme}://{parsed_seed.netloc}{parsed_seed.path.rstrip('/')}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    visited: set = set()
-    collected: list = []
-
-    def _scrape(page_url: str, depth: int):
-        if depth > max_depth or page_url in visited or len(visited) >= max_pages:
-            return
-        visited.add(page_url)
-        try:
-            resp = requests.get(page_url, headers=headers, timeout=12)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header"]):
-                tag.decompose()
-            page_text = re.sub(r"\s+", " ", soup.get_text()).strip()
-            collected.append(f"\n[SOURCE URL: {page_url}]\n{page_text[:8000]}\n")
-            if depth < max_depth:
-                for a_tag in soup.find_all("a", href=True):
-                    href = a_tag["href"]
-                    full = urljoin(page_url, href)
-                    full_parsed = urlparse(full)
-                    full_clean = f"{full_parsed.scheme}://{full_parsed.netloc}{full_parsed.path}"
-                    if (
-                        full_parsed.netloc == parsed_seed.netloc
-                        and full_clean.startswith(base_prefix)
-                        and full_clean not in visited
-                        and "#" not in full
-                    ):
-                        _scrape(full_clean, depth + 1)
-        except Exception as e:
-            collected.append(f"\n[URL ERROR: {page_url} — {e}]\n")
-
-    _scrape(seed, 0)
-    return "".join(collected)
-
-
-# ── 3. Semantic Classification Pre-processor ──────────────────────────────────
-def classify_chunks(raw_text: str) -> str:
-    procedural_re = re.compile(
-        r"\b(step \d|click|navigate|select|enter|open|run|execute|type|install"
-        r"|configure|set|enable|disable|create|delete|upload|download|log in)\b",
-        re.IGNORECASE,
-    )
-    conceptual_re = re.compile(
-        r"\b(overview|introduction|concept|architecture|definition|what is"
-        r"|refers to|designed to|represents|consists of|is a|is the)\b",
-        re.IGNORECASE,
-    )
-    instructional_re = re.compile(
-        r"\b(learn|understand|objective|goal|will be able to|upon completion"
-        r"|by the end|outcome|skill|competency)\b",
-        re.IGNORECASE,
-    )
-    labelled_lines = []
-    for para in raw_text.split("\n"):
-        para = para.strip()
-        if not para:
-            labelled_lines.append("")
-            continue
-        if procedural_re.search(para):
-            labelled_lines.append(f"[PROCEDURAL] {para}")
-        elif instructional_re.search(para):
-            labelled_lines.append(f"[INSTRUCTIONAL] {para}")
-        elif conceptual_re.search(para):
-            labelled_lines.append(f"[CONCEPTUAL] {para}")
-        else:
-            labelled_lines.append(para)
-    return "\n".join(labelled_lines)
-
-
-# ── OPTION B: Smart Relevance Filter ─────────────────────────────────────────
-def smart_filter_chunks(
-    raw_text: str,
-    course_title: str,
-    job_roles: list,
-    cap: int = KNOWLEDGE_HARD_CAP,
-) -> str:
-    """
-    Scores every paragraph in raw_text by keyword overlap with course_title
-    and job_roles. Keeps the highest-scoring paragraphs until the cap is reached.
-    Low-scoring filler paragraphs are dropped, preserving source tags.
-
-    This means a 100-page PDF will contribute its MOST RELEVANT paragraphs
-    rather than just the first N characters.
-    """
-    # Build keyword set from title + roles (lowercase, split on spaces/punctuation)
-    keywords = set(re.findall(r"[a-z]{3,}", (course_title + " " + " ".join(job_roles)).lower()))
-
-    paragraphs = raw_text.split("\n")
-    scored = []
-    for para in paragraphs:
-        lower = para.lower()
-        # Always keep source tags and section markers — score them high
-        if re.match(r"^\[(FILE|URL|SOURCE)", para) or re.match(r"^\[PROCEDURAL|CONCEPTUAL|INSTRUCTIONAL", para):
-            scored.append((999, para))
-            continue
-        score = sum(1 for kw in keywords if kw in lower)
-        scored.append((score, para))
-
-    # Sort by score descending, but reconstruct in ORIGINAL ORDER
-    # Strategy: keep all paragraphs above score 0, then fill remaining budget
-    # from score-0 paragraphs to preserve some context.
-    kept_high  = [p for s, p in scored if s > 0]
-    kept_low   = [p for s, p in scored if s == 0]
-
-    result_lines = []
-    budget = cap
-    for para in kept_high:
-        if budget <= 0:
-            break
-        result_lines.append(para)
-        budget -= len(para)
-
-    # Fill remaining budget with low-score paragraphs for context
-    for para in kept_low:
-        if budget <= 0:
-            break
-        result_lines.append(para)
-        budget -= len(para)
-
-    return "\n".join(result_lines)
-
-
-# ── OPTION C: Per-File AI Summarisation ──────────────────────────────────────
-def summarise_file_with_ai(
-    filename: str,
-    raw_text: str,
-    course_title: str,
-    job_roles: str,
-    product_name: str,
-) -> str:
-    """
-    Makes a dedicated AI call to summarise a single file's full extracted text.
-    This means even a 200-page PDF is fully read and distilled into a structured
-    summary that captures ALL key concepts, procedures, and tables — not just
-    the first 20k characters.
-
-    Returns a compact, structured summary tagged with [FILE: filename].
-    """
-    # Send up to 40,000 chars of the raw file to the summariser
-    # (well within LLaMA context window for a single focused call)
-    text_to_summarise = raw_text[:40_000]
-
-    summary_prompt = f"""
-You are an expert Oracle instructional designer.
-
-You have been given extracted text from the file: "{filename}"
-
-Your task: Produce a STRUCTURED SUMMARY of this document for use in designing
-a training course with the following context:
-  Course Title : {course_title}
-  Product      : {product_name}
-  Job Roles    : {job_roles}
-
-Your summary MUST:
-1. Be organised under these headings (use only those that apply):
-   - KEY CONCEPTS & DEFINITIONS
-   - PRODUCT ARCHITECTURE & COMPONENTS
-   - STEP-BY-STEP PROCEDURES & WORKFLOWS
-   - CONFIGURATION PARAMETERS & SETTINGS
-   - TABLES, DATA SCHEMAS & REFERENCE MATERIAL
-   - LEARNING OBJECTIVES & OUTCOMES (if present)
-   - COMMON ERRORS, TROUBLESHOOTING & BEST PRACTICES
-   - BUSINESS USE CASES & SCENARIOS
-
-2. Under each heading, use bullet points.
-3. Preserve specific product names, field names, parameter values, and step numbers exactly.
-4. Do NOT paraphrase technical terms — keep them verbatim.
-5. Every bullet must tag its source: [FILE: {filename}]
-6. Target length: 800–1200 words. Be comprehensive — this summary replaces the full document.
-7. If the document contains tables, reproduce their key column headers and a representative row.
-
-DOCUMENT TEXT:
-{text_to_summarise}
-
-OUTPUT THE STRUCTURED SUMMARY ONLY. No preamble, no meta-commentary.
-"""
-
+def extract_text(file_bytes: bytes, filename: str) -> str:
+    ext = Path(filename).suffix.lower()
     try:
-        resp = GROQ_CLIENT.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": summary_prompt}],
-            temperature=0.2,
-            max_tokens=2000,
-        )
-        summary = resp.choices[0].message.content.strip()
-        return f"\n\n=== AI SUMMARY OF: {filename} ===\n{summary}\n=== END SUMMARY ===\n\n"
+        if ext == ".pdf":            return _extract_pdf(file_bytes)
+        elif ext in (".docx",".doc"):return _extract_docx(file_bytes)
+        elif ext in (".pptx",".ppt"):return _extract_pptx(file_bytes)
+        elif ext in (".xlsx",".xls"):return _extract_xlsx(file_bytes)
+        elif ext in (".txt",".csv"): return file_bytes.decode("utf-8", errors="replace")
+        else: return ""
     except Exception as e:
-        # Fallback: return first 8000 chars if AI summarisation fails
-        return f"\n\n=== FALLBACK EXTRACT: {filename} (AI summary failed: {e}) ===\n{raw_text[:8000]}\n"
+        return f"[Error extracting {filename}: {e}]"
 
 
-# ── 4. File Content Extractor (PDF / PPTX / DOCX + OCR) ──────────────────────
-def extract_master_content(file, ocr_enabled: bool = False) -> str:
-    """Extracts ALL pages/slides from a file with no page limit."""
-    if file is None:
-        return ""
-    text = ""
-    ext = file.name.split(".")[-1].lower()
+def _extract_pdf(file_bytes: bytes) -> str:
+    parts = []
+    # Try pdfplumber first
     try:
-        if ext == "pdf":
-            f_bytes = file.read()
-            with pdfplumber.open(io.BytesIO(f_bytes)) as pdf:
-                total_pages = len(pdf.pages)
-                for i, page in enumerate(pdf.pages):
-                    p_text = page.extract_text() or ""
-                    for table in page.extract_tables():
-                        for row in table:
-                            p_text += " | ".join(
-                                [str(c) if c else "[SPANNED]" for c in row]
-                            ) + "\n"
-                    if ocr_enabled and (not p_text.strip() or len(p_text) < 100):
-                        imgs = convert_from_bytes(f_bytes, first_page=i + 1, last_page=i + 1)
-                        for img in imgs:
-                            p_text += f"\n[OCR]: {pytesseract.image_to_string(img)}\n"
-                    text += f"\n[FILE: {file.name} | PAGE: {i + 1} of {total_pages}]\n{p_text}\n"
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t: parts.append(t)
+    except ImportError:
+        pass
+    if parts: return "\n".join(parts)
 
-        elif ext in ["pptx", "pptm"]:
-            prs = Presentation(file)
-            total_slides = len(prs.slides)
-            for i, slide in enumerate(prs.slides):
-                s_txt = ""
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        s_txt += shape.text + " "
-                    if shape.has_table:
-                        for row in shape.table.rows:
-                            s_txt += (
-                                " | ".join(
-                                    [c.text_frame.text if not c.is_spanned else "[SPANNED]"
-                                     for c in row.cells]
-                                ) + "\n"
-                            )
-                    if ocr_enabled and shape.shape_type == 13:
-                        img = Image.open(io.BytesIO(shape.image.blob))
-                        s_txt += f"\n[SCREENSHOT OCR]: {pytesseract.image_to_string(img)}\n"
-                text += f"\n[FILE: {file.name} | SLIDE: {i + 1} of {total_slides}]\n{s_txt}\n"
-
-        elif ext in ["docx", "doc"]:
-            doc = DocxRead(file)
-            text += "\n".join([p.text for p in doc.paragraphs])
-
-    except Exception as e:
-        st.warning(f"⚠️ Could not fully read `{file.name}`: {e}")
-
-    # Apply semantic classification
-    return classify_chunks(text)
-
-
-# ── 5. Markdown Table Parser ──────────────────────────────────────────────────
-def parse_markdown_tables(text: str):
-    lines = text.splitlines(keepends=True)
-    segments = []
-    buf = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if re.match(r"\s*\|.+\|", line):
-            if i + 1 < len(lines) and re.match(r"\s*\|[\s\-\|:]+\|", lines[i + 1]):
-                if buf:
-                    segments.append(("text", "".join(buf)))
-                    buf = []
-                headers = [c.strip() for c in line.strip().strip("|").split("|")]
-                i += 2
-                rows = []
-                while i < len(lines) and re.match(r"\s*\|.+\|", lines[i]):
-                    row = [c.strip() for c in lines[i].strip().strip("|").split("|")]
-                    rows.append(row)
-                    i += 1
-                segments.append(("table", headers, rows))
-                continue
-        buf.append(line)
-        i += 1
-    if buf:
-        segments.append(("text", "".join(buf)))
-    return segments
-
-
-# ── 6. Word Builder ───────────────────────────────────────────────────────────
-_C_NAVY      = "1A1A2E"
-_C_RED       = "C74634"
-_C_BLUE      = "005B8E"
-_C_SILVER    = "F0F4F8"
-_C_BORDER    = "DDE1E7"
-_C_WHITE     = "FFFFFF"
-_C_DARK_TEXT = "1D1D1F"
-
-
-def _rgb(hex6: str) -> RGBColor:
-    return RGBColor(int(hex6[0:2], 16), int(hex6[2:4], 16), int(hex6[4:6], 16))
-
-
-def _set_cell_bg(cell, hex_color: str):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    shd = OxmlElement("w:shd")
-    shd.set(qn("w:val"), "clear")
-    shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), hex_color)
-    tcPr.append(shd)
-
-
-def _set_cell_border(cell, hex_color: str = _C_BORDER):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    tcBorders = OxmlElement("w:tcBorders")
-    for side in ("top", "left", "bottom", "right"):
-        border = OxmlElement(f"w:{side}")
-        border.set(qn("w:val"), "single")
-        border.set(qn("w:sz"), "4")
-        border.set(qn("w:space"), "0")
-        border.set(qn("w:color"), hex_color)
-        tcBorders.append(border)
-    tcPr.append(tcBorders)
-
-
-def _set_cell_padding(cell, top=60, bottom=60, left=100, right=100):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    tcMar = OxmlElement("w:tcMar")
-    for side, val in (("top", top), ("bottom", bottom), ("left", left), ("right", right)):
-        m = OxmlElement(f"w:{side}")
-        m.set(qn("w:w"), str(val))
-        m.set(qn("w:type"), "dxa")
-        tcMar.append(m)
-    tcPr.append(tcMar)
-
-
-def _add_cover_page(doc, title, gen_date, product, roles, level):
-    bar = doc.add_table(rows=1, cols=1)
-    bar.style = "Table Grid"
-    bar_cell = bar.rows[0].cells[0]
-    _set_cell_bg(bar_cell, _C_NAVY)
-    bar_cell.paragraphs[0].clear()
-    run = bar_cell.paragraphs[0].add_run("  ORACLE UNIVERSITY")
-    run.font.bold = True; run.font.size = Pt(11)
-    run.font.color.rgb = _rgb(_C_WHITE); run.font.name = "Calibri"
-    bar_cell.paragraphs[0].paragraph_format.space_before = Pt(6)
-    bar_cell.paragraphs[0].paragraph_format.space_after  = Pt(6)
-    doc.add_paragraph("")
-    lbl = doc.add_paragraph()
-    lbl_run = lbl.add_run("TRAINING DESIGN DOCUMENT")
-    lbl_run.font.size = Pt(9); lbl_run.font.bold = True
-    lbl_run.font.color.rgb = _rgb(_C_RED); lbl_run.font.name = "Calibri"
-    lbl.paragraph_format.space_after = Pt(4)
-    t = doc.add_paragraph()
-    t_run = t.add_run(title)
-    t_run.font.size = Pt(24); t_run.font.bold = True
-    t_run.font.color.rgb = _rgb(_C_NAVY); t_run.font.name = "Calibri"
-    t.paragraph_format.space_after = Pt(16)
-    meta = doc.add_table(rows=1, cols=4)
-    meta.style = "Table Grid"
-    meta_labels = [("📅 Date", gen_date), ("📦 Product", product),
-                   ("🎯 Level", level), ("👤 Roles", roles[:40] + "…" if len(roles) > 40 else roles)]
-    for ci, (lbl_txt, val_txt) in enumerate(meta_labels):
-        cell = meta.rows[0].cells[ci]
-        _set_cell_bg(cell, _C_SILVER); _set_cell_border(cell, _C_BORDER)
-        _set_cell_padding(cell, 80, 80, 120, 120)
-        p = cell.paragraphs[0]; p.clear()
-        label_r = p.add_run(lbl_txt + "\n")
-        label_r.font.size = Pt(8); label_r.font.bold = True
-        label_r.font.color.rgb = _rgb(_C_BLUE); label_r.font.name = "Calibri"
-        val_r = p.add_run(val_txt)
-        val_r.font.size = Pt(9); val_r.font.name = "Calibri"
-        val_r.font.color.rgb = _rgb(_C_DARK_TEXT)
-    doc.add_paragraph("")
-    div = doc.add_paragraph()
-    div_run = div.add_run("─" * 90)
-    div_run.font.color.rgb = _rgb(_C_RED); div_run.font.size = Pt(8)
-    div.paragraph_format.space_after = Pt(14)
-
-
-def _add_section_header(doc, title):
-    tbl = doc.add_table(rows=1, cols=1)
-    tbl.style = "Table Grid"
-    cell = tbl.rows[0].cells[0]
-    _set_cell_bg(cell, _C_RED)          # Changed from _C_NAVY → _C_RED for distinction
-    _set_cell_padding(cell, 100, 100, 180, 180)
-    p = cell.paragraphs[0]; p.clear()
-    run = p.add_run(f"  {title}")
-    run.font.bold      = True
-    run.font.size      = Pt(12)         # Slightly larger
-    run.font.color.rgb = _rgb(_C_WHITE)
-    run.font.name      = "Calibri"
-    run.font.all_caps  = True           # ALL CAPS for visual weight
-    sp = doc.add_paragraph("")
-    sp.paragraph_format.space_before = Pt(0)
-    sp.paragraph_format.space_after  = Pt(6)
-
-
-
-def _add_sub_heading(doc, title):
-    p = doc.add_paragraph()
-    run = p.add_run(title)
-    run.font.bold = True; run.font.size = Pt(10.5)
-    run.font.color.rgb = _rgb(_C_RED); run.font.name = "Calibri"
-    p.paragraph_format.space_before = Pt(8); p.paragraph_format.space_after = Pt(3)
-    return p
-def _add_gtm_sub_heading(doc, title):
-    """Small inline sub-heading for GTM items like 'Business Problems Solved:'"""
-    p = doc.add_paragraph()
-    run = p.add_run(f"  {title}")        # leading spaces = indent effect
-    run.font.bold      = True
-    run.font.size      = Pt(10)
-    run.font.italic    = True
-    run.font.color.rgb = _rgb(_C_BLUE)  # Blue, distinct from the red sub-heading
-    run.font.name      = "Calibri"
-    p.paragraph_format.space_before = Pt(6)
-    p.paragraph_format.space_after  = Pt(2)
-    p.paragraph_format.left_indent  = Inches(0.25)
-    return p
-
-
-def _style_table(doc, headers, rows):
-    if not headers or not rows:
-        return
-    col_count = len(headers)
-    table = doc.add_table(rows=1 + len(rows), cols=col_count)
-    table.style = "Table Grid"
-    tbl_elem = table._tbl
-    tblPr = tbl_elem.find(qn("w:tblPr"))
-    if tblPr is None:
-        tblPr = OxmlElement("w:tblPr"); tbl_elem.insert(0, tblPr)
-    tblW = OxmlElement("w:tblW")
-    tblW.set(qn("w:w"), "0"); tblW.set(qn("w:type"), "auto")
-    tblPr.append(tblW)
-    hdr_cells = table.rows[0].cells
-    for ci, htext in enumerate(headers):
-        cell = hdr_cells[ci]
-        _set_cell_bg(cell, _C_NAVY); _set_cell_border(cell, "2E3A6E")
-        _set_cell_padding(cell, 80, 80, 120, 120)
-        p = cell.paragraphs[0]; p.clear()
-        run = p.add_run(htext)
-        run.bold = True; run.font.size = Pt(9)
-        run.font.color.rgb = _rgb(_C_WHITE); run.font.name = "Calibri"
-    for ri, row_data in enumerate(rows):
-        row_cells = table.rows[ri + 1].cells
-        bg = _C_WHITE if ri % 2 == 0 else _C_SILVER
-        for ci in range(col_count):
-            cell = row_cells[ci]
-            cell_text = row_data[ci] if ci < len(row_data) else ""
-            _set_cell_bg(cell, bg); _set_cell_border(cell, _C_BORDER)
-            _set_cell_padding(cell, 70, 70, 110, 110)
-            p = cell.paragraphs[0]; p.clear()
-            run = p.add_run(cell_text)
-            run.font.size = Pt(9); run.font.name = "Calibri"
-            run.font.color.rgb = _rgb(_C_DARK_TEXT)
-    doc.add_paragraph("").paragraph_format.space_after = Pt(8)
-
-
-def build_word(content: str, title: str) -> io.BytesIO:
-    doc = DocxDocument()
-    for section in doc.sections:
-        section.top_margin    = Cm(1.8); section.bottom_margin = Cm(1.8)
-        section.left_margin   = Cm(2.2); section.right_margin  = Cm(2.2)
-    normal = doc.styles["Normal"]
-    normal.font.name = "Calibri"; normal.font.size = Pt(10)
-    normal.font.color.rgb = _rgb(_C_DARK_TEXT)
-    for lvl, sz, col in [(1, 13, _C_NAVY), (2, 11, _C_RED), (3, 10, _C_BLUE)]:
-        h = doc.styles[f"Heading {lvl}"]
-        h.font.name = "Calibri"; h.font.size = Pt(sz); h.font.bold = True
-        h.font.color.rgb = _rgb(col)
-        h.paragraph_format.space_before = Pt(10); h.paragraph_format.space_after = Pt(4)
-    gen_date = datetime.now().strftime("%B %d, %Y")
-    _add_cover_page(doc, title, gen_date, product="Oracle University",
-                    roles="See Persona Section", level="See Course Overview")
-    segments = parse_markdown_tables(content)
-
-    # GTM-specific small sub-heading labels
-    GTM_SUB_LABELS = {"Business Problems Solved:", "Learner Takeaways:"}
-
-    for seg in segments:
-        if seg[0] == "table":
-            _, headers, rows = seg
-            _style_table(doc, headers, rows)
-        else:
-            _current_section = ""  # track which section we are in
-
-            for line in seg[1].splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-
-                # ── A: Track current section ──────────────────────────────────
-                sec_match_check = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
-                if sec_match_check:
-                    _current_section = sec_match_check.group(1).strip()
-
-                # ── Section header (major heading band) ───────────────────────
-                sec_match = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
-                if sec_match:
-                    _add_section_header(doc, sec_match.group(1).strip())
-                    continue
-
-                # ── C: GTM sub-headings (must come BEFORE kv_match) ───────────
-                if any(line.startswith(label) for label in GTM_SUB_LABELS):
-                    _add_gtm_sub_heading(doc, line)
-                    continue
-
-                # ── B: Key-value lines with indent ────────────────────────────
-                kv_match = re.match(r"^([A-Z][A-Za-z\s/\-]{1,40})\s*:\s*(.+)$", line)
-                if kv_match:
-                    p = doc.add_paragraph()
-                    p.paragraph_format.space_before = Pt(1)
-                    p.paragraph_format.space_after  = Pt(1)
-                    p.paragraph_format.left_indent  = Inches(0.3)
-                    key_run = p.add_run(kv_match.group(1) + ": ")
-                    key_run.bold = True; key_run.font.size = Pt(10)
-                    key_run.font.name = "Calibri"; key_run.font.color.rgb = _rgb(_C_NAVY)
-                    val_run = p.add_run(kv_match.group(2))
-                    val_run.font.size = Pt(10); val_run.font.name = "Calibri"
-                    val_run.font.color.rgb = _rgb(_C_DARK_TEXT)
-                    continue
-
-                # ── Sub-heading (title-case lines ending with colon) ──────────
-                if (line.endswith(":") and len(line) < 70
-                        and (line == line.title() + ":" or line == line.upper())):
-                    _add_sub_heading(doc, line)
-                    continue
-
-                # ── Numbered section titles or ALL-CAPS labels ────────────────
-                if re.match(r"^\d+[a-z]?\.\s+[A-Z]", line) or re.match(r"^[A-Z]{2,}[\s:–]", line):
-                    p = doc.add_paragraph()
-                    p.paragraph_format.space_before = Pt(6)
-                    p.paragraph_format.space_after  = Pt(2)
-                    run = p.add_run(line); run.bold = True; run.font.size = Pt(10)
-                    run.font.name = "Calibri"; run.font.color.rgb = _rgb(_C_BLUE)
-                    continue
-
-                # ── D: Bullet points with deeper indent ───────────────────────
-                if line.startswith(("- ", "• ", "* ", "· ")):
-                    p = doc.add_paragraph(style="List Bullet")
-                    p.paragraph_format.left_indent  = Inches(0.5)
-                    p.paragraph_format.space_before = Pt(1)
-                    p.paragraph_format.space_after  = Pt(1)
-                    run = p.add_run(line[2:])
-                    run.font.size = Pt(10); run.font.name = "Calibri"
-                    continue
-
-                # ── Numbered lists ────────────────────────────────────────────
-                if re.match(r"^\d+[\.\)]\s", line):
-                    p = doc.add_paragraph(style="List Number")
-                    p.paragraph_format.left_indent  = Inches(0.3)
-                    p.paragraph_format.space_before = Pt(1)
-                    p.paragraph_format.space_after  = Pt(1)
-                    run = p.add_run(re.sub(r"^\d+[\.\)]\s", "", line))
-                    run.font.size = Pt(10); run.font.name = "Calibri"
-                    continue
-
-                # ── Citation / source tags ────────────────────────────────────
-                if re.match(r"^\[(FILE|URL|ORACLE)", line):
-                    p = doc.add_paragraph()
-                    p.paragraph_format.left_indent  = Inches(0.2)
-                    p.paragraph_format.space_before = Pt(0)
-                    p.paragraph_format.space_after  = Pt(2)
-                    run = p.add_run(line); run.font.size = Pt(8.5); run.font.italic = True
-                    run.font.name = "Calibri"; run.font.color.rgb = _rgb("6B7280")
-                    continue
-
-                # ── D: Plain body paragraph with indent ───────────────────────
-                p = doc.add_paragraph()
-                p.paragraph_format.space_before = Pt(1)
-                p.paragraph_format.space_after  = Pt(3)
-                p.paragraph_format.left_indent  = Inches(0.3)
-                run = p.add_run(line)
-                run.font.size = Pt(10); run.font.name = "Calibri"
-                run.font.color.rgb = _rgb(_C_DARK_TEXT)
-
-    doc.add_paragraph("")
-    footer_p = doc.add_paragraph()
-    footer_run = footer_p.add_run(
-        f"Oracle University · Training Design Document · Generated {gen_date}")
-    footer_run.font.size = Pt(8); footer_run.font.italic = True
-    footer_run.font.color.rgb = _rgb("9CA3AF"); footer_run.font.name = "Calibri"
-    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
-    return buf
-
-
-
-# ── 7. PDF Builder ────────────────────────────────────────────────────────────
-def build_pdf(content: str, title: str) -> io.BytesIO:
-    from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as RLTable, TableStyle, HRFlowable
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT, TA_CENTER
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-
-    C_NAVY   = colors.HexColor("#1A1A2E"); C_RED    = colors.HexColor("#C74634")
-    C_BLUE   = colors.HexColor("#005B8E"); C_SILVER = colors.HexColor("#F0F4F8")
-    C_BORDER = colors.HexColor("#DDE1E7"); C_MIST   = colors.HexColor("#F7F9FB")
-    C_GREY   = colors.HexColor("#6B7280"); C_TEXT   = colors.HexColor("#1D1D1F")
-    C_WHITE  = colors.white
-
-    buf = io.BytesIO()
-    gen_date = datetime.now().strftime("%B %d, %Y")
-
-    def _on_page(canvas, doc):
-        canvas.saveState()
-        w, h = A4
-        canvas.setFillColor(C_NAVY); canvas.rect(0, h - 28, w, 28, fill=1, stroke=0)
-        canvas.setFillColor(C_WHITE); canvas.setFont("Helvetica-Bold", 8)
-        canvas.drawString(1.5 * cm, h - 18, "ORACLE UNIVERSITY")
-        canvas.setFont("Helvetica", 7.5)
-        canvas.drawRightString(w - 1.5 * cm, h - 18, f"Training Design Document · {title[:55]}")
-        canvas.setFillColor(C_RED); canvas.rect(0, h - 31, w, 3, fill=1, stroke=0)
-        canvas.setFillColor(C_BORDER); canvas.rect(0, 0, w, 22, fill=1, stroke=0)
-        canvas.setFillColor(C_GREY); canvas.setFont("Helvetica", 7)
-        canvas.drawString(1.5 * cm, 7, f"Generated {gen_date}  ·  Oracle University  ·  Confidential")
-        canvas.drawRightString(w - 1.5 * cm, 7, f"Page {doc.page}")
-        canvas.restoreState()
-
-    doc_pdf = SimpleDocTemplate(buf, pagesize=A4,
-        rightMargin=1.8*cm, leftMargin=1.8*cm, topMargin=1.6*cm, bottomMargin=1.6*cm)
-
-    base = getSampleStyleSheet()
-    sty_title    = ParagraphStyle("DocTitle",   parent=base["Normal"], fontName="Helvetica-Bold",
-                                   fontSize=22, textColor=C_NAVY, leading=28, spaceAfter=6)
-    sty_subtitle = ParagraphStyle("DocSub",     parent=base["Normal"], fontName="Helvetica",
-                                   fontSize=11, textColor=C_RED,  leading=16, spaceAfter=16)
-    sty_sec_hdr  = ParagraphStyle("SecHdr",     parent=base["Normal"], fontName="Helvetica-Bold",
-                                   fontSize=10, textColor=C_WHITE, backColor=C_NAVY,
-                                   leftIndent=8, spaceBefore=14, spaceAfter=6, borderPadding=(5,8,5,8))
-    sty_sub_hdr  = ParagraphStyle("SubHdr",     parent=base["Normal"], fontName="Helvetica-Bold",
-                                   fontSize=10, textColor=C_RED,  spaceBefore=10, spaceAfter=3)
-    sty_label_hdr= ParagraphStyle("LabelHdr",   parent=base["Normal"], fontName="Helvetica-Bold",
-                                   fontSize=9.5,textColor=C_BLUE, spaceBefore=6, spaceAfter=2)
-    sty_body     = ParagraphStyle("Body",        parent=base["Normal"], fontName="Helvetica",
-                                   fontSize=9.5,textColor=C_TEXT, leading=14, spaceBefore=2, spaceAfter=3)
-    sty_bullet   = ParagraphStyle("Bullet",      parent=base["Normal"], fontName="Helvetica",
-                                   fontSize=9.5,textColor=C_TEXT, leading=13,
-                                   leftIndent=14, firstLineIndent=-10, spaceBefore=1, spaceAfter=1)
-    sty_num      = ParagraphStyle("Num",         parent=base["Normal"], fontName="Helvetica",
-                                   fontSize=9.5,textColor=C_TEXT, leading=13,
-                                   leftIndent=16, firstLineIndent=-12, spaceBefore=1, spaceAfter=1)
-    sty_cite     = ParagraphStyle("Cite",        parent=base["Normal"], fontName="Helvetica-Oblique",
-                                   fontSize=8,  textColor=C_GREY, leading=11,
-                                   leftIndent=10, spaceBefore=0, spaceAfter=2)
-    sty_tbl_hdr  = ParagraphStyle("TblHdr",      parent=base["Normal"], fontName="Helvetica-Bold",
-                                   fontSize=8,  textColor=C_WHITE, leading=11)
-    sty_tbl_cell = ParagraphStyle("TblCell",     parent=base["Normal"], fontName="Helvetica",
-                                   fontSize=8,  textColor=C_TEXT, leading=11)
-
-    elements = []
-    elements.append(Spacer(1, 0.6*cm))
-    elements.append(Paragraph("TRAINING DESIGN DOCUMENT", sty_subtitle))
-    elements.append(Paragraph(title, sty_title))
-    elements.append(HRFlowable(width="100%", thickness=2, color=C_RED, spaceAfter=10))
-    meta_data = [[Paragraph(f"<b>Date</b><br/>{gen_date}", sty_body),
-                  Paragraph("<b>Issuer</b><br/>Oracle University", sty_body),
-                  Paragraph("<b>Classification</b><br/>Confidential — Internal", sty_body)]]
-    meta_tbl = RLTable(meta_data, colWidths=["33%","33%","34%"])
-    meta_tbl.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,-1),C_SILVER),("GRID",(0,0),(-1,-1),0.5,C_BORDER),
-        ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),
-        ("LEFTPADDING",(0,0),(-1,-1),10),("RIGHTPADDING",(0,0),(-1,-1),10),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-    ]))
-    elements.append(meta_tbl); elements.append(Spacer(1, 0.5*cm))
-
-    segments = parse_markdown_tables(content)
-    for seg in segments:
-        if seg[0] == "table":
-            _, headers, rows = seg
-            if not headers or not rows: continue
-            col_count = len(headers)
-            page_w = A4[0] - 3.6*cm
-            col_w = [page_w / col_count] * col_count
-            tbl_data = [[Paragraph(h, sty_tbl_hdr) for h in headers]]
-            for row in rows:
-                tbl_data.append([Paragraph(row[ci] if ci < len(row) else "", sty_tbl_cell)
-                                  for ci in range(col_count)])
-            rl_tbl = RLTable(tbl_data, colWidths=col_w, repeatRows=1)
-            rl_tbl.setStyle(TableStyle([
-                ("BACKGROUND",(0,0),(-1,0),C_NAVY),("TEXTCOLOR",(0,0),(-1,0),C_WHITE),
-                ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),8),
-                ("TOPPADDING",(0,0),(-1,0),6),("BOTTOMPADDING",(0,0),(-1,0),6),
-                ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),
-                ("ROWBACKGROUNDS",(0,1),(-1,-1),[C_WHITE,C_MIST]),
-                ("FONTSIZE",(0,1),(-1,-1),8),("TOPPADDING",(0,1),(-1,-1),5),
-                ("BOTTOMPADDING",(0,1),(-1,-1),5),("GRID",(0,0),(-1,-1),0.4,C_BORDER),
-                ("LINEBELOW",(0,0),(-1,0),1.5,C_RED),("VALIGN",(0,0),(-1,-1),"TOP"),
-            ]))
-            elements.append(rl_tbl); elements.append(Spacer(1,10))
-        else:
-            for line in seg[1].splitlines():
-                line = line.strip()
-                if not line: elements.append(Spacer(1,3)); continue
-                sec_match = re.match(r"---?\s*([A-Z][A-Z\s/\-]+)$", line)
-                if sec_match:
-                    elements.append(Spacer(1,6))
-                    elements.append(Paragraph(sec_match.group(1).strip(), sty_sec_hdr))
-                    elements.append(HRFlowable(width="100%",thickness=1,color=C_RED,spaceAfter=4))
-                    continue
-                kv_match = re.match(r"^([A-Z][A-Za-z\s/\-]{1,40})\s*:\s*(.+)$", line)
-                if kv_match:
-                    txt = f"<b><font color='#1A1A2E'>{kv_match.group(1)}:</font></b>  {kv_match.group(2)}"
-                    elements.append(Paragraph(txt, sty_body)); continue
-                if (line.endswith(":") and len(line) < 70
-                        and (line == line.title() + ":" or line == line.upper())):
-                    elements.append(Paragraph(line, sty_sub_hdr)); continue
-                if re.match(r"^\d+[a-z]?\.\s+[A-Z]", line) or re.match(r"^[A-Z]{2,}[\s:–—]", line):
-                    elements.append(Paragraph(line, sty_label_hdr)); continue
-                if line.startswith(("- ","• ","* ","· ")):
-                    elements.append(Paragraph("• " + line[2:], sty_bullet)); continue
-                if re.match(r"^\d+[\.\)]\s", line):
-                    nm = re.match(r"^(\d+[\.\)])\s(.+)$", line)
-                    if nm: elements.append(Paragraph(f"{nm.group(1)} {nm.group(2)}", sty_num))
-                    continue
-                if re.match(r"^\[(FILE|URL|ORACLE)", line):
-                    elements.append(Paragraph(line, sty_cite)); continue
-                try: elements.append(Paragraph(line, sty_body))
-                except Exception: elements.append(Paragraph(re.sub(r"[^\x20-\x7E]"," ",line), sty_body))
-
-    doc_pdf.build(elements, onFirstPage=_on_page, onLaterPages=_on_page)
-    buf.seek(0)
-    return buf
-
-
-# ── 8. Format Validator ───────────────────────────────────────────────────────
-def validate_format(ai_output: str) -> dict:
-    validation_prompt = f"""
-You are a Quality Reviewer for Oracle University training design documents.
-Review the following document and answer ONLY in a JSON object with this exact schema:
-{{
-  "sections_present": {{
-    "COURSE OVERVIEW": true, "COURSE END GOAL": true, "PERSONA INFORMATION": true,
-    "IMPLEMENTATION READINESS": true, "GTM MESSAGING": true,
-    "COURSE COVERAGE TABLE": true, "END GOAL CHECKLIST": true,
-    "ASSESSMENT TOPICS": true, "CASE STUDY": true, "CHECKLIST": true, "TRACEABILITY MAP": true
-  }},
-  "course_coverage_is_table": true,
-  "coverage_table_has_required_columns": true,
-  "qa_checklist_is_table": true,
-  "end_goal_uses_formula": true,
-  "gtm_has_linkedin_post": true,
-  "gtm_has_newsletter": true,
-  "end_goal_checklist_has_i_can_statements": true,
-  "assessment_topics_table_present": true,
-  "no_bare_oracle_knowledge_base_tags": true,
-  "missing_or_malformed": [],
-  "overall": "PASS"
-}}
-DOCUMENT TO REVIEW:
-{ai_output[:6000]}
-"""
+    # Try PyMuPDF
     try:
-        resp = GROQ_CLIENT.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": validation_prompt}],
-            temperature=0.0, max_tokens=600,
-        )
-        raw = re.sub(r"```json|```", "", resp.choices[0].message.content).strip()
-        return json.loads(raw)
+        import fitz
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc: parts.append(page.get_text())
+        if any(t.strip() for t in parts): return "\n".join(parts)
+    except Exception:
+        pass
+
+    # OCR fallback
+    return _ocr_pdf(file_bytes)
+
+
+def _ocr_pdf(file_bytes: bytes) -> str:
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        images = convert_from_bytes(file_bytes, dpi=200)
+        return "\n".join(pytesseract.image_to_string(img) for img in images)
+    except ImportError:
+        return ("[OCR unavailable — pytesseract/pdf2image not installed. "
+                "This appears to be a scanned/image-based PDF. "
+                "Please provide a text-based PDF or paste content manually.]")
     except Exception as e:
-        return {"overall": "UNKNOWN", "error": str(e)}
+        return f"[OCR failed: {e}]"
 
 
-# ── 9. Master Prompt Builder ──────────────────────────────────────────────────
-def build_master_prompt(
-    product, course_title, job_roles, audience_desc, experience_level,
-    prereqs, biz_outcomes, all_knowledge, additional_notes,
-    product_context="", benchmark_text="", benchmark_filename="", feedback="",
-) -> str:
-    feedback_block = (
-        f"\nREFINEMENT FEEDBACK FROM REVIEWER:\n{feedback}\n"
-        "IMPORTANT: Incorporate this feedback precisely in the regenerated document.\n"
-        if feedback.strip() else ""
-    )
-    prereqs_block  = prereqs if prereqs.strip() else "None specified."
-    audience_block = audience_desc if audience_desc.strip() else "Not specified — infer from job roles."
-    context_block  = product_context.strip() if product_context.strip() else "Not provided."
+def _extract_docx(file_bytes: bytes) -> str:
+    try:
+        import docx
+        doc = docx.Document(io.BytesIO(file_bytes))
+        parts = [p.text for p in doc.paragraphs]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append("\t".join(c.text for c in row.cells))
+        return "\n".join(parts)
+    except Exception as e: return f"[DOCX error: {e}]"
+
+
+def _extract_pptx(file_bytes: bytes) -> str:
+    try:
+        from pptx import Presentation
+        prs = Presentation(io.BytesIO(file_bytes))
+        parts = []
+        for i, slide in enumerate(prs.slides, 1):
+            parts.append(f"\n--- Slide {i} ---")
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    parts.append(shape.text)
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        parts.append("\t".join(c.text for c in row.cells))
+        return "\n".join(parts)
+    except Exception as e: return f"[PPTX error: {e}]"
+
+
+def _extract_xlsx(file_bytes: bytes) -> str:
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        parts = []
+        for sheet in wb.worksheets:
+            parts.append(f"\n--- Sheet: {sheet.title} ---")
+            for row in sheet.iter_rows(values_only=True):
+                parts.append("\t".join(str(c) if c is not None else "" for c in row))
+        return "\n".join(parts)
+    except Exception as e: return f"[XLSX error: {e}]"
+
+
+def scan_copyright(text: str) -> dict:
+    sample = text[:3000].lower()
+    flags = {}
+    for category, patterns in COPYRIGHT_PATTERNS.items():
+        matched = [p for p in patterns if re.search(p, sample, re.IGNORECASE)]
+        if matched: flags[category] = matched
+    return flags
+
+
+def copyright_warning_msg(flags: dict) -> str:
+    bullets = "\n".join(f"• **{cat.capitalize()}** indicators detected" for cat in flags)
+    return ("⚠️ **This document may contain protected content.**\n\n" + bullets +
+            "\n\nPlease confirm you have the rights to use this for training purposes.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. URL CRAWLER
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _LinkExtractor(HTMLParser):
+    def __init__(self, base_url):
+        super().__init__()
+        self.base_url = base_url
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "a": return
+        href = dict(attrs).get("href", "")
+        if not href or href.startswith(("#","javascript:","mailto:")): return
+        full = urllib.parse.urljoin(self.base_url, href)
+        if urllib.parse.urlparse(full).netloc == urllib.parse.urlparse(self.base_url).netloc:
+            self.links.append(full)
+
+
+def _fetch_url(url: str) -> Optional[str]:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "OracleTrainingAgent/1.0"})
+        with urllib.request.urlopen(req, timeout=CRAWL_TIMEOUT) as r:
+            return r.read().decode(r.headers.get_content_charset("utf-8"), errors="replace")
+    except Exception as e:
+        logger.warning(f"Fetch failed {url}: {e}")
+        return None
+
+
+def _html_to_text(html: str) -> str:
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL|re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>",  " ", text,  flags=re.DOTALL|re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"\s{3,}", "\n\n", text)
+    return text.strip()
+
+
+def crawl_url(base_url: str) -> tuple[str, list[str]]:
+    if not base_url.startswith(("http://","https://")):
+        base_url = "https://" + base_url
+    visited, to_visit = set(), [(base_url, 0)]
+    all_parts, crawled, total = [], [], 0
+
+    while to_visit and total < MAX_CRAWL_CHARS:
+        url, depth = to_visit.pop(0)
+        if url in visited: continue
+        visited.add(url)
+        html = _fetch_url(url)
+        if not html: continue
+        text = _html_to_text(html)
+        snippet = text[:MAX_CRAWL_CHARS - total]
+        all_parts.append(f"\n\n=== SOURCE: {url} ===\n{snippet}")
+        total += len(snippet)
+        crawled.append(url)
+        if depth < CRAWL_DEPTH:
+            ex = _LinkExtractor(url)
+            ex.feed(html)
+            seen = set()
+            for l in ex.links:
+                if l not in visited and l not in seen:
+                    seen.add(l)
+                    to_visit.append((l, depth+1))
+                    if len(seen) >= MAX_LINKS_PER_LEVEL: break
+
+    return "\n".join(all_parts), crawled
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. LLM CLIENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_groq_client():
+    try:
+        from groq import Groq
+        return Groq(api_key=st.secrets["GROQ_API_KEY"])
+    except KeyError:
+        st.error("❌ **GROQ_API_KEY not found in Streamlit secrets.**\n\n"
+                 "Go to **App Settings → Secrets** and add:\n```\nGROQ_API_KEY = \"your_key_here\"\n```")
+        st.stop()
+    except ImportError:
+        st.error("❌ `groq` package not installed. Add `groq` to requirements.txt.")
+        st.stop()
+
+
+def build_user_prompt() -> str:
+    ss = st.session_state
+
+    # Assemble source content
+    source_parts = []
+    for meta in ss.get("uploaded_files_meta", []):
+        if meta.get("confirmed") or not meta.get("flagged"):
+            source_parts.append(f"[FILE: {meta['name']}]\n{meta['text'][:8000]}")
+
+    for url, text in ss.get("crawled_content", {}).items():
+        source_parts.append(f"[URL: {url}]\n{text[:6000]}")
+
+    if ss.get("additional_text","").strip():
+        source_parts.append(f"[INPUT]\n{ss['additional_text']}")
+
+    source_block = "\n\n---\n\n".join(source_parts) if source_parts else "(No source content provided.)"
+
+    golden = ""
+    if ss.get("golden_standard_text","").strip():
+        golden = ("\n\n## GOLDEN STANDARD REFERENCE\n"
+                  "Match the tone, depth, and writing style of the following approved reference document. "
+                  "Do NOT deviate from the required template structure — only adapt style.\n\n"
+                  + ss["golden_standard_text"][:3000])
+
+    feedback = ""
+    if ss.get("user_feedback","").strip() and ss.get("regeneration_count",0) > 0:
+        feedback = ("\n\n## REVISION INSTRUCTIONS\n"
+                    "Incorporate the following feedback precisely. Do not rewrite sections not mentioned:\n\n"
+                    + ss["user_feedback"])
 
     return f"""
-ACT AS: Senior Oracle Instructional Designer at Oracle University.
+# INPUTS
 
-═══════════════════════════════════════
-COURSE CONTEXT
-═══════════════════════════════════════
-Product Name        : {product}
-Course Title        : {course_title}
-Target Job Roles    : {", ".join(job_roles)}
-Audience Description: {audience_block}
-Experience Level    : {experience_level}
-Prerequisite Skills : {prereqs_block}
-Business Outcomes   : {biz_outcomes if biz_outcomes.strip() else "Not specified — derive from product and roles."}
-Additional Notes    : {additional_notes if additional_notes.strip() else "None."}
+- **Course Title:** {ss.get('course_title','')} [INPUT]
+- **Product Name:** {ss.get('product_name','')} [INPUT]
+- **Context:** {ss.get('context','')} [INPUT]
+- **Target Job Roles:** {ss.get('target_job_roles','')} [INPUT]
+- **Job Task Analysis:** {ss.get('job_task_analysis','')} [INPUT]
+- **Course Type:** {ss.get('course_type','eLearning')} [INPUT]
+- **Audience Experience Level:** {ss.get('audience_level','Beginner')} [INPUT]
+- **Prerequisite Knowledge:** {ss.get('prerequisite_knowledge','None specified')} [INPUT]
 
-Product Context     :
-{context_block}
-{feedback_block}
+# PRODUCT DOCUMENTATION / SOURCE CONTENT
 
-═══════════════════════════════════════
-SOURCE KNOWLEDGE
-(semantically classified + AI-summarised per file — full document coverage guaranteed)
-Label meanings: [CONCEPTUAL]=explanatory, [PROCEDURAL]=step-by-step, [INSTRUCTIONAL]=learning objective
-Note: Each uploaded file has been individually summarised by AI before being assembled here.
-This means ALL pages of ALL uploaded files are represented in the knowledge below,
-regardless of document length.
-═══════════════════════════════════════
-{all_knowledge[:KNOWLEDGE_HARD_CAP] if all_knowledge.strip() else "[No source files or URLs provided — generate based on product knowledge and best practices.]"}
+{source_block}
+{golden}
+{feedback}
 
-═══════════════════════════════════════
-DESIGN MASTER CLASS — FULL FRAMEWORK (NON-NEGOTIABLE)
-═══════════════════════════════════════
-{DESIGN_MASTER_CLASS_PRINCIPLES}
-
-═══════════════════════════════════════
-SEQUENCING RULE (NON-NEGOTIABLE)
-═══════════════════════════════════════
-Modules MUST follow a strict prerequisite chain:
-  • Module 1 is ALWAYS foundational (concepts, terminology, architecture).
-  • Each subsequent module explicitly depends on the prior one.
-  • Advanced design/optimisation modules come LAST.
-  • After the Coverage Table, add one paragraph justifying the module ordering.
-
-═══════════════════════════════════════
-REFERENCE SAMPLE — MATCH THIS LEVEL OF DETAIL AND TONE
-═══════════════════════════════════════
-{"GOLDEN STANDARD BENCHMARK (Management-Approved — " + benchmark_filename + ")" if benchmark_text.strip() else "BUILT-IN ORACLE REFERENCE SAMPLE"}
-Study the document below. Match its detail depth, table structure, prose density, and tone exactly.
-
-{benchmark_text[:18000] if benchmark_text.strip() else SAMPLE_DESIGN_DOCUMENT}
-
-═══════════════════════════════════════
-REQUIRED OUTPUT STRUCTURE
-═══════════════════════════════════════
-
---- COURSE OVERVIEW
---- COURSE END GOAL
---- PERSONA INFORMATION
---- IMPLEMENTATION READINESS
---- GTM MESSAGING
---- COURSE COVERAGE TABLE
---- END GOAL CHECKLIST
---- ASSESSMENT TOPICS
---- CASE STUDY
---- CHECKLIST
---- TRACEABILITY MAP
-
-COURSE COVERAGE TABLE columns (exact):
-| Module # | Module Title | Module Learning Objective | Topic # | Topic Title | What We Teach in This Topic/Lesson | Bloom's Level | Activity Type | Est. Video Duration (min) | Key Takeaways (3–5 action-oriented) | Matching Hands-On Lab | Lab Type | Lab Duration (min) | Source Ref |
-
-END GOAL CHECKLIST columns: | # | I Can Statement | Bloom's Level | Maps to Module |
-ASSESSMENT TOPICS columns:  | # | Assessment Topic | Rationale | Suggested Type | Difficulty Level |
-CHECKLIST columns:          | # | Check | Pass/Fail |
-TRACEABILITY MAP columns:   | Source Tag | Full Reference Detail | Document Section(s) Used In |
-
-Cite [FILE: filename] or [URL: full_link] for every factual claim.
-Use [ORACLE KNOWLEDGE BASE: specific_topic_area] — NEVER a bare [ORACLE KNOWLEDGE BASE] tag.
-"""
+Now generate the complete Training Design Document following ALL template sections exactly.
+""".strip()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# UI — HEADER
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="topbar">
-  <div class="topbar-left">
-    <div class="topbar-logo">ORACLE</div>
-    <div>
-      <div class="topbar-title">Training Design Agent</div>
-      <div class="topbar-sub">Oracle University · AI-Powered Document Generation</div>
-    </div>
-  </div>
-  <div class="topbar-badge">AI-Powered v3</div>
-</div>
-""", unsafe_allow_html=True)
+def generate_doc(progress_cb=None) -> str:
+    client = get_groq_client()
+    labs   = st.session_state.get("labs_required", False)
+    system = YES_LABS_SYSTEM_PROMPT if labs else NO_LABS_SYSTEM_PROMPT
 
+    if progress_cb: progress_cb(0.08, "Sending inputs to Groq LLaMA-3.3-70B...")
 
-# ── STEPPER ────────────────────────────────────────────────────────────────────
-step_labels = ["1 · Course Information","2 · Target Audience","3 · Source Content","4 · Generate & Review"]
-c1, c2, c3, c4 = st.columns(4)
-for col, idx, label in zip([c1,c2,c3,c4], [1,2,3,4], step_labels):
-    with col:
-        if idx < st.session_state.step:
-            st.markdown(f"<div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600;color:#15803D;text-align:center'>✓ {label}</div>", unsafe_allow_html=True)
-        elif idx == st.session_state.step:
-            st.markdown(f"<div style='background:#E8F4FD;border:2px solid #005B8E;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600;color:#005B8E;text-align:center'>▶ {label}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div style='background:#F7F8FA;border:1px solid #DDE1E7;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:500;color:#9CA3AF;text-align:center'>{label}</div>", unsafe_allow_html=True)
-
-st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 1 — COURSE INFORMATION
-# ══════════════════════════════════════════════════════════════════════════════
-if st.session_state.step == 1:
-    st.markdown("""<div class="section-card"><div class="section-header"><div class="section-icon">📚</div><div><div class="section-title">Course Information</div><div class="section-sub">Define the core details of the training course</div></div></div></div>""", unsafe_allow_html=True)
-
-    st.markdown("**Course Title** <span style='color:#C74634'>*</span>", unsafe_allow_html=True)
-    course_title = st.text_input("Course Title", label_visibility="collapsed",
-        placeholder="e.g. Oracle AI Agent Studio Fundamentals", value=st.session_state.course_title)
-
-    st.markdown("**Product Name** <span style='color:#C74634'>*</span>", unsafe_allow_html=True)
-    product_name = st.text_input("Product Name", label_visibility="collapsed",
-        placeholder="e.g. Oracle AI Agent Studio", value=st.session_state.product_name)
-
-    st.markdown("**Associated Job Role(s)** <span style='color:#C74634'>*</span> _(select from list and/or type a custom role below)_", unsafe_allow_html=True)
-    all_roles = ["Solution Architect","Developer","Business Analyst","IT Manager",
-                 "Consultant","DBA","Data Scientist","End User","Administrator"]
-    selected_roles = st.multiselect("Job Roles", all_roles, label_visibility="collapsed",
-        default=[r for r in st.session_state.job_roles if r in all_roles],
-        placeholder="Choose one or more job roles...")
-    custom_role = st.text_input("Custom / Other Role (optional)",
-        placeholder="e.g. DevSecOps Engineer, ML Platform Lead…",
-        value=st.session_state.custom_role,
-        help="Type any role not in the list above.")
-
-    st.markdown("**Product Context** <span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>", unsafe_allow_html=True)
-    st.caption("Briefly describe what the product does and who it is built for. Helps the AI tailor the document more precisely.")
-    product_context = st.text_area("Product Context", label_visibility="collapsed",
-        placeholder="e.g. Oracle AI Agent Studio is a low-code platform that enables enterprises to design, deploy, and monitor autonomous AI agents...",
-        value=st.session_state.product_context, height=120)
-
-    st.divider()
-    col_left, col_right = st.columns([3,1])
-    with col_left: st.caption("🔴 * Required fields")
-    with col_right:
-        if st.button("Continue to Target Audience →", type="primary", use_container_width=True):
-            combined_roles = list(selected_roles)
-            if custom_role.strip(): combined_roles.append(custom_role.strip())
-            if not course_title.strip(): st.error("Course Title is required.")
-            elif not product_name.strip(): st.error("Product Name is required.")
-            elif not combined_roles: st.error("Please select or enter at least one job role.")
-            else:
-                st.session_state.course_title    = course_title
-                st.session_state.product_name    = product_name
-                st.session_state.job_roles       = combined_roles
-                st.session_state.custom_role     = custom_role
-                st.session_state.product_context = product_context
-                st.session_state.step = 2; st.rerun()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 2 — TARGET AUDIENCE
-# ══════════════════════════════════════════════════════════════════════════════
-elif st.session_state.step == 2:
-    st.markdown("""<div class="section-card"><div class="section-header"><div class="section-icon">👥</div><div><div class="section-title">Target Audience</div><div class="section-sub">Describe who will take this training and their prior knowledge</div></div></div></div>""", unsafe_allow_html=True)
-
-    st.markdown("**Recommended Target Audience Description** <span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>", unsafe_allow_html=True)
-    audience_desc = st.text_area("Audience Description", label_visibility="collapsed",
-        placeholder="e.g. Oracle solution architects with 2+ years of OCI experience…",
-        value=st.session_state.audience_desc, height=100)
-
-    st.markdown("**Audience Experience Level** <span style='color:#C74634'>*</span>", unsafe_allow_html=True)
-    level_options = ["","Beginner","Intermediate","Advanced"]
-    level_labels  = {"":"— Select Level —","Beginner":"🟢 Beginner — new to the product/topic",
-                     "Intermediate":"🟡 Intermediate — familiar with basics, ready for configuration tasks",
-                     "Advanced":"🔴 Advanced — experienced, focuses on architecture & optimisation"}
-    experience_level = st.selectbox("Experience Level", level_options,
-        format_func=lambda x: level_labels[x], label_visibility="collapsed",
-        index=level_options.index(st.session_state.experience_level)
-        if st.session_state.experience_level in level_options else 0)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Prerequisite Knowledge / Skills** <span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>", unsafe_allow_html=True)
-        prereqs = st.text_area("Prerequisites", label_visibility="collapsed",
-            placeholder="e.g. Familiarity with REST APIs, basic Oracle Cloud usage…",
-            value=st.session_state.prereqs, height=100)
-    with col2:
-        st.markdown("**Business Outcomes** <span style='color:#6B7280;font-weight:400;font-size:12px'>(optional)</span>", unsafe_allow_html=True)
-        biz_outcomes = st.text_area("Business Outcomes", label_visibility="collapsed",
-            placeholder="e.g. Learners will design, deploy and manage Oracle AI Agents…",
-            value=st.session_state.biz_outcomes, height=100)
-
-    st.divider()
-    col_back, col_fwd = st.columns(2)
-    with col_back:
-        if st.button("← Back", use_container_width=True): st.session_state.step = 1; st.rerun()
-    with col_fwd:
-        if st.button("Continue to Source Content →", type="primary", use_container_width=True):
-            if not experience_level: st.error("Please select an Experience Level.")
-            else:
-                st.session_state.audience_desc    = audience_desc
-                st.session_state.experience_level = experience_level
-                st.session_state.prereqs          = prereqs
-                st.session_state.biz_outcomes     = biz_outcomes
-                st.session_state.step = 3; st.rerun()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 3 — SOURCE CONTENT
-# ══════════════════════════════════════════════════════════════════════════════
-elif st.session_state.step == 3:
-
-    with st.sidebar:
-        st.title("⚙️ Extraction Settings")
-        use_ocr = st.checkbox("Enable OCR for scanned PDFs / slide screenshots", value=False,
-            help="Uses Tesseract. Slower but handles image-based documents.")
-        st.caption("Requires `tesseract` installed on your system.")
-        st.markdown("---")
-        st.caption("🔗 URL depth setting")
-        url_depth = st.slider("Sub-page crawl depth", min_value=0, max_value=3, value=1,
-            help="0 = only the page you entered. 1 = page + direct child links.")
-        url_max_pages = st.slider("Max pages to crawl per URL", min_value=1, max_value=30, value=10)
-
-    st.markdown("""<div class="section-card"><div class="section-header"><div class="section-icon">🔗</div><div><div class="section-title">Documentation Links</div><div class="section-sub">Oracle Docs, Confluence pages, white papers — AI will read these and follow sub-links</div></div></div></div>""", unsafe_allow_html=True)
-
-    url_types = ["Product Docs","Confluence","White Paper","Release Notes","Other"]
-    for i, row in enumerate(st.session_state.urls):
-        col_type, col_url, col_del = st.columns([2,5,0.6])
-        with col_type:
-            new_type = st.selectbox(f"Type {i}", url_types,
-                index=url_types.index(row["type"]) if row["type"] in url_types else 0,
-                label_visibility="collapsed", key=f"url_type_{i}")
-        with col_url:
-            new_url = st.text_input(f"URL {i}", value=row["url"],
-                placeholder="https://docs.oracle.com/...",
-                label_visibility="collapsed", key=f"url_val_{i}")
-        with col_del:
-            if len(st.session_state.urls) > 1:
-                if st.button("✕", key=f"del_url_{i}"):
-                    st.session_state.urls.pop(i); st.rerun()
-        st.session_state.urls[i] = {"type": new_type, "url": new_url}
-
-    if st.button("＋ Add Another Link"):
-        st.session_state.urls.append({"type":"Product Docs","url":""}); st.rerun()
-
-    # ── File Upload with per-file info banner ─────────────────────────────────
-    st.markdown("""
-    <div class="section-card" style="margin-top:18px">
-      <div class="section-header">
-        <div class="section-icon">📤</div>
-        <div>
-          <div class="section-title">Upload Source Files</div>
-          <div class="section-sub">
-            PDF, PPTX, DOCX — all pages extracted + individually AI-summarised before generation.
-            No page limit. 100-page PDFs are fully represented.
-          </div>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    uploaded = st.file_uploader("Upload source files", accept_multiple_files=True,
-        type=["pptx","pptm","pdf","docx"], label_visibility="collapsed")
-    if uploaded:
-        for f in uploaded:
-            size_mb = round(f.size / 1024 / 1024, 1)
-            ext = f.name.split(".")[-1].upper()
-            st.success(f"📄 **{f.name}** — {ext} · {size_mb} MB · All pages will be AI-summarised ✅")
-
-    st.session_state["use_ocr"]            = use_ocr if "use_ocr" in dir() else False
-    st.session_state["url_depth"]          = url_depth if "url_depth" in dir() else 1
-    st.session_state["url_max_pages"]      = url_max_pages if "url_max_pages" in dir() else 10
-    st.session_state["uploaded_files_data"] = uploaded or []
-
-    st.markdown("""<div class="section-card" style="margin-top:18px"><div class="section-header"><div class="section-icon">📝</div><div><div class="section-title">Additional Notes for the AI</div><div class="section-sub">Special instructions, structural preferences, compliance requirements</div></div></div></div>""", unsafe_allow_html=True)
-    additional_notes = st.text_area("Additional Notes", label_visibility="collapsed",
-        placeholder="e.g. Focus on hands-on lab activities. Include a GOV/compliance module…",
-        value=st.session_state.additional_notes, height=100)
-    st.session_state.additional_notes = additional_notes
-
-    # ── Golden Standard Benchmark ─────────────────────────────────────────────
-    st.markdown("""
-    <div class="section-card" style="margin-top:18px">
-      <div class="section-header">
-        <div class="section-icon">🏅</div>
-        <div>
-          <div class="section-title">Golden Standard Benchmark</div>
-          <div class="section-sub">Upload a management-approved sample design document — AI will match its tone, depth, and structure</div>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col_toggle, col_toggle_label = st.columns([0.08, 0.92])
-    with col_toggle:
-        use_benchmark = st.toggle("benchmark_toggle", value=st.session_state.use_benchmark,
-            label_visibility="collapsed", key="benchmark_toggle_widget")
-    with col_toggle_label:
-        if use_benchmark:
-            st.markdown("<span style='font-size:13px;font-weight:600;color:#005B8E'>✅ Benchmark mode ON — upload your approved reference document below</span>", unsafe_allow_html=True)
-        else:
-            st.markdown("<span style='font-size:13px;color:#6B7280'>Use built-in Oracle Design Master Class principles as quality standard</span>", unsafe_allow_html=True)
-
-    st.session_state.use_benchmark = use_benchmark
-
-    if use_benchmark:
-        st.markdown("<div style='background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 16px;margin:10px 0 6px 0;font-size:12px;color:#1E40AF'>📌 <strong>How this works:</strong> The AI will study your uploaded benchmark document and calibrate the generated output to match its level of detail, prose density, table structure, and overall tone.</div>", unsafe_allow_html=True)
-        benchmark_file = st.file_uploader("Upload Benchmark Document", type=["pdf","docx","pptx","pptm"],
-            accept_multiple_files=False, label_visibility="collapsed", key="benchmark_file_uploader",
-            help="This document is used as a quality benchmark only — not as course source content.")
-        if benchmark_file:
-            bm_size_mb = round(benchmark_file.size / 1024 / 1024, 1)
-            st.success(f"🏅 **Benchmark loaded:** {benchmark_file.name} — {benchmark_file.type.split('/')[-1].upper()} · {bm_size_mb} MB")
-            bm_text = extract_master_content(benchmark_file, ocr_enabled=False)
-            st.session_state.benchmark_text     = bm_text
-            st.session_state.benchmark_filename = benchmark_file.name
-        elif not st.session_state.benchmark_text:
-            st.info("📂 No benchmark document uploaded yet.")
-        else:
-            st.success(f"🏅 **Benchmark retained:** {st.session_state.benchmark_filename} (from earlier in this session)")
-    else:
-        st.session_state.benchmark_text     = ""
-        st.session_state.benchmark_filename = ""
-
-    st.divider()
-    col_back, col_gen = st.columns(2)
-    with col_back:
-        if st.button("← Back", use_container_width=True): st.session_state.step = 2; st.rerun()
-    with col_gen:
-        if st.button("⚡ Generate Design Document", type="primary", use_container_width=True):
-            st.session_state.step = 4
-            st.session_state.generated = False
-            st.session_state.gen_error = ""
-            st.rerun()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 4 — GENERATE & REVIEW
-# ══════════════════════════════════════════════════════════════════════════════
-elif st.session_state.step == 4:
-
-    if not st.session_state.generated:
-        st.markdown("""<div class="section-card"><div class="section-header"><div class="section-icon">⚡</div><div><div class="section-title">Generating Training Design Document</div><div class="section-sub">AI agent is analysing your inputs and applying Oracle instructional design principles…</div></div></div></div>""", unsafe_allow_html=True)
-
-        gen_steps = [
-            "Ingesting uploaded files (all pages — no limit)",
-            "AI-summarising each file individually (Option C)",
-            "Smart relevance filtering of URL content (Option B)",
-            "Scraping and parsing URL sources (with sub-link crawl)",
-            "Calibrating content depth to audience experience level",
-            "Generating learner-centric design document via AI",
-            "Validating output format (second AI pass)",
-            "Building PDF and Word exports",
-            "Running reliability audit on generated content",
-        ]
-
-        progress_bar    = st.progress(0, text="Initialising…")
-        step_placeholder = st.empty()
-
-        def render_steps(current_idx: int):
-            html = ""
-            for j, s in enumerate(gen_steps):
-                if j < current_idx:    cls, dot = "done",    "✓"
-                elif j == current_idx: cls, dot = "active",  "●"
-                else:                  cls, dot = "pending",  str(j + 1)
-                html += f'<div class="gen-step {cls}"><div class="gen-dot">{dot}</div><span>{s}</span></div>'
-            step_placeholder.markdown(html, unsafe_allow_html=True)
-
-        # ── Step 0: Extract all files (no page limit) ─────────────────────────
-        render_steps(0); progress_bar.progress(5, text="Ingesting files — all pages…")
-        use_ocr        = st.session_state.get("use_ocr", False)
-        uploaded_files = st.session_state.get("uploaded_files_data", [])
-
-        raw_file_texts = {}   # filename → full raw extracted text
-        for f in uploaded_files:
-            raw_text = extract_master_content(f, use_ocr)
-            raw_file_texts[f.name] = raw_text
-
-        # ── Step 1: OPTION C — AI-summarise each file individually ────────────
-        render_steps(1); progress_bar.progress(15, text="AI-summarising uploaded files…")
-        file_summaries_combined = ""
-        file_summary_log = []
-
-        for fname, raw_text in raw_file_texts.items():
-            if not raw_text.strip():
-                continue
-            char_count = len(raw_text)
-            st.info(f"📄 Summarising **{fname}** ({char_count:,} characters extracted from all pages)…")
-            summary = summarise_file_with_ai(
-                filename=fname,
-                raw_text=raw_text,
-                course_title=st.session_state.course_title,
-                job_roles=", ".join(st.session_state.job_roles),
-                product_name=st.session_state.product_name,
-            )
-            file_summaries_combined += summary
-            file_summary_log.append({"File": fname, "Extracted": f"{char_count:,} chars", "Status": "✅ Summarised"})
-
-        if file_summary_log:
-            st.success(f"✅ {len(file_summary_log)} file(s) fully summarised — all pages represented.")
-
-        # ── Step 2: OPTION B — Smart filter URL content ───────────────────────
-        render_steps(2); progress_bar.progress(28, text="Smart filtering URL content…")
-        depth     = st.session_state.get("url_depth", 1)
-        max_pages = st.session_state.get("url_max_pages", 10)
-        url_src   = ""
-        for row in st.session_state.urls:
-            if row["url"].strip():
-                url_src += extract_url_content(row["url"], max_depth=depth, max_pages=max_pages)
-
-        # Classify URL content then smart-filter it
-        url_src_classified = classify_chunks(url_src)
-        url_src_filtered   = smart_filter_chunks(
-            url_src_classified,
-            course_title=st.session_state.course_title,
-            job_roles=st.session_state.job_roles,
+    full_text = ""
+    try:
+        stream = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": build_user_prompt()},
+            ],
+            max_tokens=MAX_TOKENS,
+            temperature=0.3,
+            stream=True,
         )
+        chunk_n = 0
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_text += delta
+            chunk_n += 1
+            if progress_cb and chunk_n % 40 == 0:
+                pct = min(0.08 + (len(full_text) / (MAX_TOKENS * 4)) * 0.85, 0.93)
+                progress_cb(pct, "Generating design document…")
+    except Exception as e:
+        raise RuntimeError(f"Groq API call failed: {e}") from e
 
-        # ── OPTION A: Combine with raised cap (60,000 chars) ─────────────────
-        # File summaries take priority; URL content fills remaining budget
-        all_knowledge = file_summaries_combined + url_src_filtered
-        # Final hard cap applied inside build_master_prompt via KNOWLEDGE_HARD_CAP
+    if progress_cb: progress_cb(0.96, "Finalising…")
+    return full_text
 
-        # Steps 3-5: UX progress
-        render_steps(3); progress_bar.progress(38, text="Scraping URLs…"); time.sleep(0.3)
-        render_steps(4); progress_bar.progress(50, text="Calibrating to audience level…"); time.sleep(0.3)
-        render_steps(5); progress_bar.progress(62, text="Calling AI model…")
 
-        # ── Step 5: Primary AI call ───────────────────────────────────────────
+def quality_check(doc_text: str) -> dict:
+    required = REQUIRED_SECTIONS_BASE + (["Hands-On Lab"] if st.session_state.get("labs_required") else [])
+    present  = [s for s in required if re.search(re.escape(s), doc_text, re.IGNORECASE)]
+    missing  = [s for s in required if s not in present]
+    return {"present": present, "missing": missing, "pass": not missing}
+
+
+def extract_traceability(doc_text: str) -> tuple[list[dict], dict]:
+    rows, counts = [], {}
+    tag_pat  = re.compile(r"\[(FILE:[^\]]+|URL:[^\]]+|INPUT)\]")
+    current  = "General"
+    for line in doc_text.split("\n"):
+        hm = re.match(r"^#{1,3}\s+(.+)", line)
+        if hm: current = hm.group(1).strip()
+        for m in tag_pat.finditer(line):
+            tag = m.group(1)
+            rows.append({"Source Tag": tag, "Document Section": current, "Context": line[:80]})
+            counts[tag] = counts.get(tag, 0) + 1
+    return rows, counts
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 8. EXPORT  (Oracle-branded DOCX + PDF)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_docx(md_text: str) -> bytes:
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        raise ImportError("python-docx not installed. Add `python-docx` to requirements.txt.")
+
+    C_RED   = RGBColor(0xC7, 0x46, 0x34)
+    C_DARK  = RGBColor(0x3A, 0x3A, 0x3A)
+    C_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+
+    def cell_bg(cell, hex_col):
+        tc = cell._tc; tcPr = tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"),"clear"); shd.set(qn("w:color"),"auto"); shd.set(qn("w:fill"), hex_col)
+        tcPr.append(shd)
+
+    def hrule(doc, col=ORACLE_GREY_HEX):
+        p = doc.add_paragraph()
+        pPr = p._p.get_or_add_pPr(); pBdr = OxmlElement("w:pBdr")
+        bot = OxmlElement("w:bottom")
+        bot.set(qn("w:val"),"single"); bot.set(qn("w:sz"),"6")
+        bot.set(qn("w:space"),"1"); bot.set(qn("w:color"), col)
+        pBdr.append(bot); pPr.append(pBdr)
+        p.paragraph_format.space_after = Pt(3)
+
+    def inline_run(para, text):
+        parts = re.split(r"(\*\*[^*]+\*\*|\*[^*]+\*)", text)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                r = para.add_run(part[2:-2]); r.font.bold = True
+            elif part.startswith("*") and part.endswith("*"):
+                r = para.add_run(part[1:-1]); r.font.italic = True
+            else:
+                r = para.add_run(part)
+            para.runs[-1].font.name = "Arial"
+            para.runs[-1].font.size = Pt(10.5)
+
+    def add_md_table(doc, table_lines):
+        rows = []
+        for line in table_lines:
+            line = line.strip()
+            if not line.startswith("|"): continue
+            if re.match(r"^\|[-| :]+\|$", line): continue
+            cells = [c.strip() for c in line.split("|") if c.strip() != ""]
+            if cells: rows.append(cells)
+        if not rows: return
+        cols = max(len(r) for r in rows)
+        tbl = doc.add_table(rows=len(rows), cols=cols)
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        for ri, row in enumerate(rows):
+            for ci in range(cols):
+                txt = row[ci] if ci < len(row) else ""
+                cell = tbl.cell(ri, ci)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                p = cell.paragraphs[0]; p.clear()
+                run = p.add_run(txt); run.font.name = "Arial"; run.font.size = Pt(9)
+                if ri == 0:
+                    run.font.bold = True; run.font.color.rgb = C_WHITE
+                    cell_bg(cell, ORACLE_RED_HEX)
+                elif ri % 2 == 0:
+                    cell_bg(cell, ORACLE_GREY_HEX)
+        doc.add_paragraph()
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width  = int(8.5 * 914400)
+    sec.page_height = int(11  * 914400)
+    for attr in ("left_margin","right_margin","top_margin","bottom_margin"):
+        setattr(sec, attr, Inches(1))
+    doc.styles["Normal"].font.name = "Arial"
+    doc.styles["Normal"].font.size = Pt(10.5)
+
+    # Cover page
+    ss = st.session_state
+    cover_tbl = doc.add_table(rows=1, cols=1)
+    cover_tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    cc = cover_tbl.cell(0,0); cell_bg(cc, ORACLE_RED_HEX)
+    cp = cc.paragraphs[0]
+    cr = cp.add_run("  Oracle University")
+    cr.font.color.rgb = C_WHITE; cr.font.bold = True
+    cr.font.size = Pt(13); cr.font.name = "Arial"
+    cp.paragraph_format.space_before = Pt(8); cp.paragraph_format.space_after = Pt(8)
+
+    doc.add_paragraph()
+    tp = doc.add_paragraph()
+    tr = tp.add_run(ss.get("course_title","Training Design Document"))
+    tr.font.size = Pt(24); tr.font.bold = True
+    tr.font.color.rgb = C_RED; tr.font.name = "Arial"
+
+    doc.add_paragraph()
+    for label, val in [
+        ("Product Area",    ss.get("product_name","")),
+        ("Course Type",     ss.get("course_type","")),
+        ("Target Audience", ss.get("target_job_roles","")),
+        ("Audience Level",  ss.get("audience_level","")),
+        ("Labs Included",   "Yes" if ss.get("labs_required") else "No"),
+        ("Document Date",   datetime.today().strftime("%B %d, %Y")),
+    ]:
+        p = doc.add_paragraph()
+        rl = p.add_run(f"{label}: "); rl.font.bold = True
+        rl.font.size = Pt(11); rl.font.name = "Arial"; rl.font.color.rgb = C_DARK
+        rv = p.add_run(str(val))
+        rv.font.size = Pt(11); rv.font.name = "Arial"
+        p.paragraph_format.space_after = Pt(3)
+
+    doc.add_page_break()
+
+    # Parse markdown
+    lines = md_text.split("\n")
+    i, table_lines, in_table = 0, [], False
+
+    while i < len(lines):
+        raw = lines[i].rstrip()
+
+        if raw.startswith("|"):
+            table_lines.append(raw); in_table = True; i += 1; continue
+
+        if in_table:
+            add_md_table(doc, table_lines)
+            table_lines = []; in_table = False
+
+        if raw.startswith("## "):
+            hrule(doc, ORACLE_RED_HEX)
+            p = doc.add_paragraph()
+            r = p.add_run(raw[3:].strip())
+            r.font.size = Pt(14); r.font.bold = True
+            r.font.color.rgb = C_RED; r.font.name = "Arial"
+            p.paragraph_format.space_before = Pt(14); p.paragraph_format.space_after = Pt(5)
+        elif raw.startswith("### "):
+            p = doc.add_paragraph()
+            r = p.add_run(raw[4:].strip())
+            r.font.size = Pt(12); r.font.bold = True
+            r.font.color.rgb = C_DARK; r.font.name = "Arial"
+            p.paragraph_format.space_before = Pt(10); p.paragraph_format.space_after = Pt(3)
+        elif raw.startswith("# "):
+            p = doc.add_paragraph()
+            r = p.add_run(raw[2:].strip())
+            r.font.size = Pt(18); r.font.bold = True
+            r.font.color.rgb = C_RED; r.font.name = "Arial"
+            p.paragraph_format.space_before = Pt(18); p.paragraph_format.space_after = Pt(6)
+        elif raw.startswith("---"):
+            hrule(doc)
+        elif raw.startswith("- [ ]") or raw.startswith("- [x]"):
+            p = doc.add_paragraph(style="List Bullet")
+            tick = "☑ " if raw.startswith("- [x]") else "☐ "
+            r = p.add_run(tick + raw[5:].strip())
+            r.font.name = "Arial"; r.font.size = Pt(10)
+        elif raw.startswith("- ") or raw.startswith("* "):
+            p = doc.add_paragraph(style="List Bullet")
+            inline_run(p, raw[2:].strip())
+        elif re.match(r"^\d+\.\s", raw):
+            p = doc.add_paragraph(style="List Number")
+            inline_run(p, re.sub(r"^\d+\.\s","",raw).strip())
+        elif raw.strip() == "":
+            doc.add_paragraph().paragraph_format.space_after = Pt(2)
+        else:
+            p = doc.add_paragraph()
+            inline_run(p, raw)
+            p.paragraph_format.space_after = Pt(4)
+
+        i += 1
+
+    if table_lines: add_md_table(doc, table_lines)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def build_pdf(docx_bytes: bytes) -> Optional[bytes]:
+    with tempfile.TemporaryDirectory() as tmp:
+        dp = os.path.join(tmp, "doc.docx")
+        pp = os.path.join(tmp, "doc.pdf")
+        with open(dp,"wb") as f: f.write(docx_bytes)
         try:
-            prompt = build_master_prompt(
-                product=st.session_state.product_name,
-                course_title=st.session_state.course_title,
-                job_roles=st.session_state.job_roles,
-                audience_desc=st.session_state.audience_desc,
-                experience_level=st.session_state.experience_level,
-                prereqs=st.session_state.prereqs,
-                biz_outcomes=st.session_state.biz_outcomes,
-                all_knowledge=all_knowledge,
-                additional_notes=st.session_state.additional_notes,
-                product_context=st.session_state.product_context,
-                benchmark_text=st.session_state.get("benchmark_text", ""),
-                benchmark_filename=st.session_state.get("benchmark_filename", ""),
-                feedback=st.session_state.feedback_text,
-            )
-            response = GROQ_CLIENT.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                max_tokens=8000,
-            )
-            ai_output = response.choices[0].message.content
-            st.session_state.ai_raw_output = ai_output
+            r = subprocess.run(
+                ["libreoffice","--headless","--convert-to","pdf","--outdir",tmp,dp],
+                capture_output=True, timeout=60)
+            if r.returncode == 0 and os.path.exists(pp):
+                return open(pp,"rb").read()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    return None
 
+
+def safe_filename(name: str) -> str:
+    return re.sub(r"[^\w\s-]","",name).strip().replace(" ","_")[:60] or "design_doc"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9. SCREEN 1 — Course Information & Target Audience
+# ══════════════════════════════════════════════════════════════════════════════
+
+def screen1():
+    st.markdown("### Step 1 of 3 — Course Information & Target Audience")
+    st.caption("Fill in all required fields. The more detail you provide, the more accurate and tailored the output.")
+
+    # Course Information
+    st.markdown('<div class="section-card"><h3>📘 Course Information</h3>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.session_state["course_title"] = st.text_input(
+            "Course Title *", value=st.session_state["course_title"],
+            placeholder="e.g. Oracle HCM Cloud: Absence Management for HR Admins")
+    with c2:
+        st.session_state["product_name"] = st.text_input(
+            "Product Name / Area *", value=st.session_state["product_name"],
+            placeholder="e.g. Oracle HCM Cloud — Absence Management")
+
+    st.session_state["context"] = st.text_area(
+        "Context *", value=st.session_state["context"], height=130,
+        placeholder=("Provide background and purpose: What is new? Why does this training matter? "
+                     "What product feature or update does it cover?"))
+    tip("Be as specific as possible — include release notes, new features, and business context.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Target Audience
+    st.markdown('<div class="section-card"><h3>👥 Target Audience</h3>', unsafe_allow_html=True)
+    c3, c4 = st.columns(2)
+    with c3:
+        st.session_state["target_job_roles"] = st.text_input(
+            "Target Job Roles *", value=st.session_state["target_job_roles"],
+            placeholder="e.g. HR Administrator, Benefits Specialist, Payroll Manager")
+    with c4:
+        levels = ["Beginner", "Intermediate", "Advanced"]
+        st.session_state["audience_level"] = st.selectbox(
+            "Audience Experience Level", options=levels,
+            index=levels.index(st.session_state["audience_level"]))
+
+    st.session_state["job_task_analysis"] = st.text_area(
+        "Job Task Analysis (Focus Areas) *", value=st.session_state["job_task_analysis"], height=150,
+        placeholder=("Summarize key tasks per role:\n"
+                     "HR Administrator: Configure absence plans, manage requests, run reports...\n"
+                     "Benefits Specialist: Enroll employees, manage life events..."))
+    tip("Describe 4–6 real job tasks per role — what they do daily in the system.")
+
+    st.session_state["prerequisite_knowledge"] = st.text_input(
+        "Prerequisite Knowledge or Skills (Optional)", value=st.session_state["prerequisite_knowledge"],
+        placeholder="e.g. Basic Oracle Cloud navigation, HCM Foundations course")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Course Settings
+    st.markdown('<div class="section-card"><h3>⚙️ Course Settings</h3>', unsafe_allow_html=True)
+    c5, c6 = st.columns(2)
+    with c5:
+        types = ["eLearning","Instructor-Led Training (ILT)","Virtual Instructor-Led Training (vILT)","Blended (eLearning + ILT)"]
+        ct = st.session_state["course_type"]
+        if ct not in types: ct = "eLearning"
+        st.session_state["course_type"] = st.selectbox("Course Type", options=types, index=types.index(ct))
+    with c6:
+        st.session_state["labs_required"] = st.toggle(
+            "🔬 Labs Required For This Course?",
+            value=st.session_state["labs_required"],
+            help="ON = Hands-on Labs in every module (Yes-Labs template). OFF = Scenarios only (No-Labs template).")
+        if st.session_state["labs_required"]:
+            st.success("✅ Labs ON — each module will include a hands-on lab.")
+        else:
+            st.info("ℹ️ Labs OFF — each module will include scenario-based exercises.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Navigation
+    st.markdown("---")
+    _, col_next = st.columns([3,1])
+    with col_next:
+        if st.button("Next: Source Content →", use_container_width=True):
+            errors = []
+            for field, label in [("course_title","Course Title"), ("product_name","Product Name"),
+                                  ("context","Context"), ("target_job_roles","Target Job Roles"),
+                                  ("job_task_analysis","Job Task Analysis")]:
+                if not st.session_state.get(field,"").strip():
+                    errors.append(f"❌ {label} is required.")
+            if errors:
+                for e in errors: st.error(e)
+            else:
+                st.session_state["step"] = 2; st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. SCREEN 2 — Source Content
+# ══════════════════════════════════════════════════════════════════════════════
+
+def screen2():
+    st.markdown("### Step 2 of 3 — Source Content")
+    st.caption("Upload reference materials and provide documentation links. All content is extracted and analyzed before generation.")
+
+    # Documentation Links
+    st.markdown('<div class="section-card"><h3>🔗 Documentation Links</h3>', unsafe_allow_html=True)
+    tip("Enter a base URL — the crawler follows child links 2 levels deep automatically.")
+    links = st.session_state.get("doc_links", [""])
+    updated = []
+    for i, link in enumerate(links):
+        cl, cd = st.columns([6,1])
+        with cl:
+            val = st.text_input(f"URL {i+1}", value=link, key=f"url_{i}",
+                                placeholder="https://docs.oracle.com/en/cloud/saas/...")
+            updated.append(val)
+        with cd:
+            st.write("")
+            if len(links) > 1 and st.button("✕", key=f"del_url_{i}"):
+                links.pop(i); st.session_state["doc_links"] = links; st.rerun()
+    st.session_state["doc_links"] = updated
+    if st.button("➕ Add another URL"):
+        st.session_state["doc_links"].append(""); st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # File Uploads
+    st.markdown('<div class="section-card"><h3>📂 Upload Supporting Documents</h3>', unsafe_allow_html=True)
+    tip("Accepted: PDF, DOCX, PPTX, XLSX, TXT, CSV. Scanned PDFs will be OCR-processed. No audio/video.")
+
+    uploaded = st.file_uploader(
+        "Upload documents (multiple allowed)", accept_multiple_files=True,
+        type=["pdf","docx","doc","pptx","ppt","xlsx","xls","txt","csv"])
+
+    existing_meta  = st.session_state.get("uploaded_files_meta", [])
+    existing_names = {m["name"] for m in existing_meta}
+
+    if uploaded:
+        for uf in uploaded:
+            if uf.name in existing_names: continue
+            ok, reason = validate_extension(uf.name)
+            if not ok:
+                st.error(f"❌ **{uf.name}**: {reason}"); continue
+            with st.spinner(f"Processing {uf.name}…"):
+                fb   = uf.read()
+                text = extract_text(fb, uf.name)
+            flags = scan_copyright(text)
+            existing_meta.append({
+                "name": uf.name, "text": text,
+                "flagged": bool(flags), "confirmed": not bool(flags), "flags": flags,
+            })
+            existing_names.add(uf.name)
+        st.session_state["uploaded_files_meta"] = existing_meta
+
+    remove_idx = []
+    for idx, meta in enumerate(st.session_state.get("uploaded_files_meta", [])):
+        with st.expander(f"📄 {meta['name']}", expanded=meta["flagged"]):
+            st.caption(f"Extracted: {len(meta['text']):,} characters")
+            if meta["flagged"]:
+                st.markdown(f'<div class="copyright-warning">{copyright_warning_msg(meta["flags"])}</div>',
+                            unsafe_allow_html=True)
+                confirmed = st.checkbox(
+                    "✅ I confirm I have the rights to use this document for training purposes.",
+                    key=f"confirm_{idx}_{meta['name']}", value=meta.get("confirmed", False))
+                st.session_state["uploaded_files_meta"][idx]["confirmed"] = confirmed
+                if not confirmed:
+                    st.warning("⚠️ This file will be **excluded** from generation until you confirm usage rights.")
+            else:
+                st.success("✅ No copyright flags detected. Ready for analysis.")
+            if st.button("🗑 Remove", key=f"rm_{idx}_{meta['name']}"):
+                remove_idx.append(idx)
+
+    if remove_idx:
+        st.session_state["uploaded_files_meta"] = [
+            m for i,m in enumerate(st.session_state["uploaded_files_meta"]) if i not in remove_idx]
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Additional Text
+    st.markdown('<div class="section-card"><h3>📝 Additional Content</h3>', unsafe_allow_html=True)
+    st.session_state["additional_text"] = st.text_area(
+        "Paste additional technical information, notes or content (optional)",
+        value=st.session_state.get("additional_text",""), height=140,
+        placeholder="Paste release notes, feature descriptions, SME notes, process flows…")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Golden Standard
+    st.markdown('<div class="section-card"><h3>⭐ Golden Standard Reference (Optional)</h3>', unsafe_allow_html=True)
+    tip("Upload an approved reference design doc. AI will match its tone/depth — template structure is always preserved.")
+    gf = st.file_uploader("Upload reference doc (DOCX or PDF)", type=["pdf","docx"], key="golden_upload")
+    if gf:
+        with st.spinner("Extracting reference tone…"):
+            gt = extract_text(gf.read(), gf.name)
+        st.session_state["golden_standard_text"] = gt
+        st.success(f"✅ Golden Standard loaded: {gf.name} ({len(gt):,} chars)")
+    elif st.session_state.get("golden_standard_text",""):
+        st.info("ℹ️ A Golden Standard reference is already loaded.")
+        if st.button("🗑 Clear Golden Standard"):
+            st.session_state["golden_standard_text"] = ""; st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Navigation
+    st.markdown("---")
+    cb, _, cn = st.columns([1,2,1])
+    with cb:
+        if st.button("⬅ Back to Step 1"): st.session_state["step"] = 1; st.rerun()
+    with cn:
+        if st.button("Generate Document →", use_container_width=True):
+            # Crawl URLs
+            valid_urls = [u.strip() for u in st.session_state.get("doc_links",[]) if u.strip()]
+            if valid_urls:
+                crawled = {}
+                ph = st.empty()
+                for url in valid_urls:
+                    ph.info(f"🔍 Crawling: {url}")
+                    try:
+                        text, visited = crawl_url(url)
+                        if text.strip():
+                            crawled[url] = text
+                            ph.success(f"✅ Crawled {len(visited)} page(s) from {url}")
+                    except Exception as e:
+                        ph.warning(f"⚠️ Could not crawl {url}: {e}")
+                st.session_state["crawled_content"] = crawled
+                ph.empty()
+            st.session_state["step"] = 3; st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11. SCREEN 3 — Generate, Audit & Export
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _md_preview(md: str) -> str:
+    """Lightweight markdown → HTML for the preview panel."""
+    lines = md.split("\n")
+    out, table_buf, in_table = [], [], False
+
+    def flush_table():
+        rows = []
+        for tl in table_buf:
+            if re.match(r"^\|[-| :]+\|$", tl.strip()): continue
+            cells = [c.strip() for c in tl.split("|") if c.strip()]
+            if cells: rows.append(cells)
+        if not rows: return ""
+        cols = max(len(r) for r in rows)
+        h = '<table style="border-collapse:collapse;width:100%;font-size:12px;margin:10px 0">'
+        for ri, row in enumerate(rows):
+            h += "<tr>"
+            for ci in range(cols):
+                v = html_lib.escape(row[ci]) if ci < len(row) else ""
+                if ri == 0:
+                    h += f'<th style="background:#C74634;color:white;padding:5px 9px;text-align:left;border:1px solid #ddd">{v}</th>'
+                else:
+                    bg = "#f8f8f8" if ri%2==0 else "white"
+                    h += f'<td style="padding:4px 9px;border:1px solid #ddd;background:{bg}">{v}</td>'
+            h += "</tr>"
+        return h + "</table>"
+
+    def inline(text):
+        text = html_lib.escape(text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", text)
+        text = re.sub(r"`(.+?)`",       r"<code>\1</code>", text)
+        return text
+
+    for line in lines:
+        raw = line.rstrip()
+        if raw.startswith("|"):
+            table_buf.append(raw); in_table = True; continue
+        if in_table:
+            out.append(flush_table()); table_buf = []; in_table = False
+
+        if raw.startswith("## "):
+            txt = html_lib.escape(raw[3:])
+            out.append(f'<h2 style="color:#C74634;font-size:15px;margin:16px 0 5px;border-bottom:2px solid #C74634;padding-bottom:3px">{txt}</h2>')
+        elif raw.startswith("### "):
+            out.append(f'<h3 style="color:#3A3A3A;font-size:13px;margin:11px 0 3px">{html_lib.escape(raw[4:])}</h3>')
+        elif raw.startswith("# "):
+            out.append(f'<h1 style="color:#C74634;font-size:19px;margin:18px 0 7px">{html_lib.escape(raw[2:])}</h1>')
+        elif raw.startswith("---"):
+            out.append('<hr style="border:none;border-top:1px solid #e0e0e0;margin:8px 0"/>')
+        elif raw.startswith("- [ ]") or raw.startswith("- [x]"):
+            tick = "☑" if raw.startswith("- [x]") else "☐"
+            out.append(f'<p style="margin:2px 0;padding-left:14px">{tick} {inline(raw[5:].strip())}</p>')
+        elif raw.startswith("- ") or raw.startswith("* "):
+            out.append(f'<p style="margin:2px 0;padding-left:14px">• {inline(raw[2:].strip())}</p>')
+        elif re.match(r"^\d+\.\s", raw):
+            out.append(f'<p style="margin:2px 0;padding-left:14px">{inline(re.sub(r"^\d+\.\s","",raw).strip())}</p>')
+        elif raw.strip() == "":
+            out.append("<br/>")
+        else:
+            out.append(f'<p style="margin:3px 0;line-height:1.65">{inline(raw)}</p>')
+
+    if in_table: out.append(flush_table())
+    return "\n".join(out)
+
+
+def screen3():
+    st.markdown("### Step 3 of 3 — Generate & Export")
+
+    # ── Auto-generate on first arrival ────────────────────────────────────────
+    if not st.session_state.get("generation_done"):
+        prog  = st.progress(0)
+        status = st.empty()
+        err    = st.empty()
+
+        def cb(pct, msg):
+            prog.progress(min(pct,1.0)); status.markdown(f"**{msg}**")
+
+        try:
+            cb(0.05, "🔍 Analyzing inputs and source content…")
+            doc_text = generate_doc(cb)
+            st.session_state["generated_doc"]  = doc_text
+            st.session_state["generation_done"] = True
+            rows, counts = extract_traceability(doc_text)
+            st.session_state["traceability_rows"] = rows
+            st.session_state["source_counts"]     = counts
+            prog.progress(1.0)
+            status.success("✅ Design document generated successfully!")
         except Exception as e:
-            st.session_state.gen_error = str(e)
-            st.session_state.generated = True
+            err.error(f"❌ Generation failed: {e}")
+            if st.button("⬅ Go Back and Retry"):
+                st.session_state["step"] = 2; st.rerun()
+            return
+
+    doc_text = st.session_state.get("generated_doc","")
+
+    # ── Quality Check ──────────────────────────────────────────────────────────
+    qc = quality_check(doc_text)
+    with st.expander("🔍 Quality Check — Section Completeness", expanded=not qc["pass"]):
+        if qc["pass"]:
+            st.success(f"✅ All {len(qc['present'])} required sections are present.")
+        else:
+            st.warning(f"⚠️ {len(qc['missing'])} required section(s) may be missing.")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**✅ Present:**")
+                for s in qc["present"]: st.markdown(f"- {s}")
+            with c2:
+                st.markdown("**❌ Missing:**")
+                for s in qc["missing"]: st.markdown(f"- {s}")
+
+    # ── Document Preview ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 📄 Generated Training Design Document")
+    st.markdown(f'<div class="doc-output">{_md_preview(doc_text)}</div>', unsafe_allow_html=True)
+    with st.expander("📋 View Raw Markdown"):
+        st.code(doc_text, language="markdown")
+
+    # ── Reliability Audit ──────────────────────────────────────────────────────
+    st.markdown("---")
+    rows   = st.session_state.get("traceability_rows",[])
+    counts = st.session_state.get("source_counts",{})
+
+    with st.expander("📊 Reliability Audit & Traceability Map", expanded=False):
+        st.markdown('<div class="audit-panel">', unsafe_allow_html=True)
+        st.markdown("#### Reliability Audit Summary")
+        st.metric("Total Source Tags Found", len(rows))
+        if counts:
+            st.markdown("**Source → Usage Count:**")
+            for src, n in sorted(counts.items(), key=lambda x: -x[1]):
+                st.markdown(f"- `{src}` — **{n}** reference(s)")
+        else:
+            st.info("No inline source tags detected. Ensure source content was provided.")
+
+        st.markdown("---")
+        st.markdown("#### Source → Section Map")
+        if rows:
+            import pandas as pd
+            df = pd.DataFrame(rows)[["Source Tag","Document Section","Context"]]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No traceability data to display.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Feedback & Regeneration ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### ✏️ Provide Feedback & Regenerate")
+    st.caption("Describe the changes you'd like. The AI incorporates feedback without rewriting correct sections.")
+
+    feedback = st.text_area("Your feedback", value=st.session_state.get("user_feedback",""), height=110,
+        placeholder=("e.g. 'Add a third module covering Advanced Reporting. "
+                     "Make personas more specific to Finance roles. "
+                     "Expand the Case Study with more detail.'"))
+    st.session_state["user_feedback"] = feedback
+
+    _, col_regen = st.columns([3,1])
+    with col_regen:
+        rc = st.session_state.get("regeneration_count",0)
+        lbl = f"🔄 Regenerate (#{rc+1})" if rc > 0 else "🔄 Regenerate with Feedback"
+        if st.button(lbl, use_container_width=True, disabled=not feedback.strip()):
+            st.session_state["generation_done"] = False
+            st.session_state["regeneration_count"] = rc + 1
+            st.session_state["docx_bytes"] = None
+            st.session_state["pdf_bytes"]  = None
             st.rerun()
 
-        # ── Step 6: Format validation ─────────────────────────────────────────
-        render_steps(6); progress_bar.progress(73, text="Validating output format…")
-        st.session_state["validation_result"] = validate_format(ai_output)
+    # ── Export ─────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### ⬇️ Export")
+    fname = safe_filename(st.session_state.get("course_title","design_doc"))
+    cd, cp = st.columns(2)
 
-        # ── Step 7: Build documents ───────────────────────────────────────────
-        render_steps(7); progress_bar.progress(83, text="Building PDF and Word documents…")
-        st.session_state.pdf_buf  = build_pdf(ai_output, st.session_state.course_title)
-        st.session_state.word_buf = build_word(ai_output, st.session_state.course_title)
+    with cd:
+        if st.button("📄 Prepare DOCX"):
+            with st.spinner("Building Oracle-branded DOCX…"):
+                try:
+                    st.session_state["docx_bytes"] = build_docx(doc_text)
+                except Exception as e:
+                    st.error(f"DOCX error: {e}")
+        if st.session_state.get("docx_bytes"):
+            st.download_button("⬇️ Download DOCX", data=st.session_state["docx_bytes"],
+                file_name=fname+".docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-        # ── Step 8: Audit ─────────────────────────────────────────────────────
-        render_steps(8); progress_bar.progress(95, text="Running reliability audit…")
-        st.session_state.audit = perform_reliability_audit(ai_output)
+    with cp:
+        if st.button("📕 Prepare PDF"):
+            if not st.session_state.get("docx_bytes"):
+                with st.spinner("Building DOCX first…"):
+                    try: st.session_state["docx_bytes"] = build_docx(doc_text)
+                    except Exception as e: st.error(f"DOCX error: {e}"); st.stop()
+            with st.spinner("Converting to PDF via LibreOffice…"):
+                pdf = build_pdf(st.session_state["docx_bytes"])
+                if pdf: st.session_state["pdf_bytes"] = pdf
+                else:
+                    st.warning("⚠️ PDF conversion requires LibreOffice on the server. "
+                               "Download the DOCX and convert locally, or add `libreoffice` to packages.txt.")
+        if st.session_state.get("pdf_bytes"):
+            st.download_button("⬇️ Download PDF", data=st.session_state["pdf_bytes"],
+                file_name=fname+".pdf", mime="application/pdf")
 
-        progress_bar.progress(100, text="✅ Document ready!")
-        render_steps(len(gen_steps))
-        time.sleep(0.5)
-        st.session_state.generated     = True
-        st.session_state.feedback_text = ""
+    st.markdown("---")
+    if st.button("🔁 Start a New Design Document"):
+        for k in list(st.session_state.keys()): del st.session_state[k]
         st.rerun()
 
-    # ── OUTPUT PHASE ──────────────────────────────────────────────────────────
-    else:
-        if st.session_state.gen_error:
-            st.error(f"❌ AI generation failed: {st.session_state.gen_error}")
-            st.info("Check your GROQ_API_KEY in Streamlit secrets and try again.")
-            if st.button("← Go Back & Retry"):
-                st.session_state.step = 3; st.session_state.generated = False
-                st.session_state.gen_error = ""; st.rerun()
-            st.stop()
 
-        title    = st.session_state.course_title
-        level    = st.session_state.experience_level
-        roles    = ", ".join(st.session_state.job_roles)
-        gen_date = datetime.now().strftime("%B %d, %Y")
+# ══════════════════════════════════════════════════════════════════════════════
+# 12. MAIN ROUTER
+# ══════════════════════════════════════════════════════════════════════════════
 
-        col_title, col_btns = st.columns([3,2])
-        with col_title:
-            st.markdown(f"📄 **Training Design Document** <span style='background:#DCFCE7;color:#15803D;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;margin-left:6px'>✓ Generated</span>", unsafe_allow_html=True)
-        with col_btns:
-            col_fb, col_docx, col_pdf = st.columns(3)
-            with col_fb:
-                if st.button("💬 Feedback", use_container_width=True):
-                    st.session_state.show_feedback = not st.session_state.show_feedback; st.rerun()
-            with col_docx:
-                st.download_button("⬇ DOCX", data=st.session_state.word_buf,
-                    file_name=f"{title.replace(' ','_')}_TDD.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True)
-            with col_pdf:
-                st.download_button("⬇ PDF", data=st.session_state.pdf_buf,
-                    file_name=f"{title.replace(' ','_')}_TDD.pdf",
-                    mime="application/pdf", use_container_width=True)
+st.set_page_config(
+    page_title="Training Design Agent | Oracle University",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-        # Format Validation
-        vr = st.session_state.get("validation_result", {})
-        with st.expander("🔍 Format Validation Report", expanded=False):
-            overall = vr.get("overall","UNKNOWN")
-            colour  = "#15803D" if overall == "PASS" else "#C74634"
-            st.markdown(f"<span style='color:{colour};font-weight:700;font-size:15px'>Overall: {overall}</span>", unsafe_allow_html=True)
-            issues = vr.get("missing_or_malformed",[])
-            if issues:
-                st.markdown("**Issues found:**")
-                for issue in issues: st.markdown(f"- {issue}")
-            else:
-                st.markdown("✅ No structural issues detected.")
-            checks = [
-                ("course_coverage_is_table","Coverage Table rendered as markdown table"),
-                ("coverage_table_has_required_columns","Coverage Table has all required columns"),
-                ("end_goal_uses_formula","Course End Goal uses prescribed formula"),
-                ("gtm_has_linkedin_post","GTM section includes LinkedIn Post"),
-                ("gtm_has_newsletter","GTM section includes Newsletter Write-Up"),
-                ("end_goal_checklist_has_i_can_statements","End Goal Checklist has 'I can…' statements"),
-                ("assessment_topics_table_present","Assessment Topics table present"),
-                ("no_bare_oracle_knowledge_base_tags","No bare [ORACLE KNOWLEDGE BASE] tags"),
-            ]
-            for key, label in checks:
-                if vr.get(key) is False: st.warning(f"⚠️ {label} — needs attention.")
+init_session()
+apply_theme()
+render_sidebar()
 
-        # Reliability Audit
-        audit = st.session_state.audit or {}
-        with st.expander("📊 Reliability Audit", expanded=False):
-            a_col1, a_col2 = st.columns([1,2])
-            with a_col1:
-                st.metric("Traceability Tags", audit.get("traceability_tags",0))
-            with a_col2:
-                st.markdown("**Mandatory Section Checklist**")
-                for sec, found in audit.get("sections",{}).items():
-                    icon = "✅" if found else "❌"
-                    colour = "#15803D" if found else "#C74634"
-                    st.markdown(f"<span style='color:{colour};font-weight:600'>{icon} {sec}</span>", unsafe_allow_html=True)
-            source_map = audit.get("source_map",{})
-            if source_map:
-                st.markdown("**Source → Section Traceability Map**")
-                st.dataframe([{"Source Tag": t, "Document Section(s)": ", ".join(set(s))}
-                              for t, s in source_map.items()], use_container_width=True)
-
-        # Feedback Panel
-        if st.session_state.show_feedback:
-            st.markdown("""<div style='background:#FFF7ED;border:1px solid #FCD34D;border-radius:8px;padding:14px 18px;margin:12px 0'><strong style='font-size:13px;color:#92400E'>💬 Provide Feedback to Refine</strong><br><span style='font-size:12px;color:#B45309'>Describe what to change — the AI will regenerate incorporating your feedback exactly.</span></div>""", unsafe_allow_html=True)
-            feedback = st.text_area("Feedback", label_visibility="collapsed",
-                placeholder="e.g. Add more hands-on lab activities. Revise Section 3…",
-                value=st.session_state.feedback_text, height=90)
-            col_cancel, col_refine = st.columns(2)
-            with col_cancel:
-                if st.button("Cancel", use_container_width=True):
-                    st.session_state.show_feedback = False; st.rerun()
-            with col_refine:
-                if st.button("🔄 Refine Document", type="primary", use_container_width=True):
-                    if feedback.strip():
-                        st.session_state.feedback_text = feedback
-                        st.session_state.generated     = False
-                        st.session_state.show_feedback = False; st.rerun()
-                    else: st.warning("Please enter feedback before refining.")
-
-        # Document preview
-        bm_badge = (
-            f"<span style='background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;margin-left:4px'>🏅 Benchmark: {st.session_state.get('benchmark_filename','')}</span>"
-            if st.session_state.get("use_benchmark") and st.session_state.get("benchmark_filename") else ""
-        )
-        st.markdown(f"""
-        <div class="doc-wrap"><div class="doc-body">
-          <div class="doc-h1">{title}</div>
-          <div class="doc-meta-row">
-            <span>📅 {gen_date}</span><span>🏢 Oracle University</span>
-            <span>🎯 {level}</span><span>👤 {roles}</span>{bm_badge}
-          </div>
-        </div></div>""", unsafe_allow_html=True)
-
-        st.markdown(st.session_state.ai_raw_output)
-        st.divider()
-        if st.button("← Start Over / New Document"):
-            for key in list(st.session_state.keys()): del st.session_state[key]
-            st.rerun()
+step = st.session_state.get("step", 1)
+if   step == 1: screen1()
+elif step == 2: screen2()
+elif step == 3: screen3()
